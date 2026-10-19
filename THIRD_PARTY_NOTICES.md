@@ -15,8 +15,10 @@ the components listed below.
 All of the above licenses are MIT. Additional implementation notes for the web
 and image components are in [`src/tools/vendor/NOTICE.md`](src/tools/vendor/NOTICE.md).
 
-The build derives the agent preset from the installed DeepSeek Harness source
-checkout and bundles parts of its Pi adapter. DeepSeek Harness is MIT licensed;
+The build derives the agent preset from the installed DeepSeek Harness release and
+bundles parts of its Pi adapter, vendored from the same release tag in
+[`src/vendor/dsh-llm-pi-ai/`](src/vendor/dsh-llm-pi-ai/NOTICE.md) together with a type-only
+restatement in `src/vendor/dsh-compaction-basic/`. DeepSeek Harness is MIT licensed;
 its copyright notice is retained in [`licenses/DeepSeek-Harness.txt`](licenses/DeepSeek-Harness.txt).
 Generated configuration and compiled output are excluded from Git.
 

@@ -21,43 +21,46 @@ Piの拡張ファイルをそのままロードするものではありません
 
 ## 対応バージョン
 
-DSHの内部ソースAPIを利用するため、現在は次の組み合わせに固定しています。
+DSHの内部APIを利用するため、現在は次の組み合わせに固定しています。
 
-- DeepSeek Harness `0.2.1-rc.2`、commit [`687f282`](https://github.com/deepseek-ai/deepseek-harness/commit/687f282e8625c6b8d11ff58211a90524be2e4317) のビルド済みソースcheckout
-- Node.js 24以降、Cordis `4.0.5`
-- DSH checkoutに含まれるパッチ済み `@earendil-works/pi-ai 1.1.0`
-- インストール済み `@earendil-works/pi-coding-agent 1.1.0`
-- TUIを使う場合は `@deepseek-harness-tui/dsh-tui 0.16.0`
+- DeepSeek Harness `0.2.1-rc.2` のリリース版インストール（`dsh` コマンド）。Cordis `4.0.5`
+- Node.js 22.19以降または24以降（DSH本体と同じ）
+- 実行時の `@earendil-works/pi-ai` はDSHインストールに含まれる版（0.2.1-rc.2では1.3.0）
+- Pi `@earendil-works/pi-coding-agent 1.1.0`（認証ファイルのロック実装を共用。Codexを使う時だけ必要）
+- TUIを使う場合は `@deepseek-harness-tui/dsh-tui 0.16` 系
+
+DSHの非公開ヘルパー（`dsh-llm-pi-ai` の `config` / `context` / `stream` とその依存）は
+同じリリースタグ `dsh-v0.2.1-rc.2` から `src/vendor/` に同梱しています（[NOTICE](src/vendor/dsh-llm-pi-ai/NOTICE.md)）。
+そのためDSHのソースcheckoutは不要です。パッケージのimportはすべて実行中のDSHインストールから解決され、
+ホストとこの拡張が別々のCordisやDSHパッケージを読み込むことはありません。
 
 このリポジトリはソース公開です。npmパッケージとしては公開していません。
-`npm install` だけでは必要なDSH内部ソースが揃わないため、以下のbootstrapを使用します。
 
 ## ビルド
-
-DSHを上記commitでcheckoutし、上流の手順で依存をインストールしてビルドしてください。
-そのDSHを `dsh` コマンドで起動できることを確認します。
 
 ```sh
 git clone https://github.com/yukimaru77/dsh-pi-compat.git
 cd dsh-pi-compat
 
-# パスは自分のインストール先へ変更
-node scripts/bootstrap.mjs \
-  /path/to/deepseek-harness \
-  /path/to/node_modules/@earendil-works/pi-coding-agent
+# ビルドツール（tsdown / tsx / typescript など）だけを入れる。DSHパッケージはpeer
+pnpm install --config.auto-install-peers=false
 
-npm run build
-npm run typecheck
-npm test
+# PATH上の dsh のインストールからDSHパッケージをnode_modulesへリンク
+# （pnpm install の後は毎回再実行）
+node scripts/bootstrap.mjs
+
+pnpm run build
+pnpm run typecheck
+pnpm test
 ```
 
-引数の代わりに `DSH_SOURCE` と `PI_PACKAGE_DIR` も指定できます。
-bootstrapは指定先のバージョンを確認し、このリポジトリの `node_modules` にリンクを作ります。
-DSHやPiの設定・認証ファイルは変更しません。
+bootstrapの引数（または `DSH_INSTALL`）でDSHインストールの `node_modules` を、
+第2引数（または `PI_PACKAGE_DIR`）でPiパッケージを指定することもできます。
+bootstrapはリンクを作るだけで、DSHやPiの設定・認証ファイルは変更しません。
 
-buildで `lib/`、`presets/`、`cordis*.yml` が生成されます。
-生成YAMLにはこのcheckoutの絶対パスが入るため、ディレクトリを移動したら再ビルドしてください。
-生成物はGit管理対象外です。
+buildで `lib/`、`presets/`、`cordis*.yml` が生成されます（Git管理対象外）。
+生成YAMLはパッケージ名（`dsh-pi-compat`、`dsh-pi-compat/tools` など）で拡張を参照するので、
+checkoutの場所には依存しません。profileへは `file:` で導入します。
 
 ## Pi認証の準備
 
@@ -76,22 +79,25 @@ POSIX環境では `auth.json` の権限を `600` にします。
 
 ## TUIで使う
 
-TUIをインストールしてprofileを初期化した後、このリポジトリで実行します。
+TUI profileにこのcheckoutを追加します。`file:` は導入時点のビルドをコピーするので、
+再ビルド後は `remove` してから `add` し直してください。
 
 ```sh
-dsh --profile dsh-tui \
-  --patch "$PWD/cordis.patch.yml" \
-  --patch "$PWD/cordis.tui.patch.yml"
+dsh plugin --profile dsh-tui add "file:$PWD"
 ```
 
-新規セッションのpresetは `pi-compatible`、初期モデル設定は
-`openai-codex / gpt-6.1-sol`、effortは `medium` です。
+続けて `cordis.tui.patch.yml` の内容を `~/.dsh/profiles/dsh-tui/cordis.patch.yml` に追記します
+（Codexの認証をPi側に任せ、新規セッションを `pi-compatible` presetで始める設定です）。
+初期モデル設定は `openai-codex / gpt-6.1-sol`、effortは `medium` です。
 TUIに保存済みのモデル・effort設定がある場合はそちらが優先されます。
+
+Piにまだログインしていなくても拡張は起動します。Codexへの最初の要求でPiの設定を読み込み、
+未ログインならその要求だけがエラーになります。Piでログインした後は再起動なしで使えます。
 
 ## Webで使う
 
-Web profileがある状態で、既存の非Codex provider設定をprivate overlayへ保存し、
-ローカルbundleを追加します。このリポジトリのルートで実行してください。
+Web profileに独自のpi-ai provider設定がある場合は、先にprivate overlayへ保存します。
+このリポジトリのルートで実行してください。
 
 ```sh
 # provider設定を含むので、生成したoverlayは公開しない
@@ -100,7 +106,7 @@ node --import tsx scripts/web-profile.ts \
   "${DSH_HOME:-$HOME/.dsh}/profiles/web/cordis.patch.yml" \
   > "${DSH_HOME:-$HOME/.dsh}/pi-compat-providers.local.yml"
 
-dsh plugin --profile web add "link:$PWD" -w --config.auto-install-peers=false
+dsh plugin --profile web add "file:$PWD"
 dsh web --patch "${DSH_HOME:-$HOME/.dsh}/pi-compat-providers.local.yml"
 ```
 
@@ -135,16 +141,17 @@ SSHは専用の `ssh_run` / `ssh_read` / `ssh_write` などを使います。
 ## 検証
 
 ```sh
-npm run typecheck
-npm test
-npm run build
+pnpm run typecheck
+pnpm test
+pnpm run build
 
 # 初期化済みのTUI/Web profileがある場合
-npm run test:smoke
-npm run test:smoke:web
+pnpm run test:smoke
+pnpm run test:smoke:web
 ```
 
-単体・統合テストは合成データを使用します。smokeは一時HOMEで実DSH loaderを起動し、
+単体・統合テストは合成データを使用します。`tests/portable.test.ts` は公開済みの
+`@deepseek-ai/dsh-agent-loop-testkit`（devDependency）を使います。smokeは一時HOMEにprofileをコピーし、このcheckoutをその `dsh-pi-compat` として実DSH loaderを起動し、
 ツール・コマンド・preset・圧縮エンジンの登録を確認します。
 実際のOAuth更新、課金される画像生成、SSH接続の成功を保証するテストではありません。
 別のprofileを使う場合は `DSH_TUI_PROFILE_SOURCE` / `DSH_WEB_PROFILE_SOURCE`、
