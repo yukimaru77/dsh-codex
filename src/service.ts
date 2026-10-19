@@ -45,7 +45,7 @@ export class PiCompatService extends Service<Config> {
   }
   constructor(ctx: Context, private readonly options: Config) { super(ctx, 'piCompat'); }
   async [Service.init]() {
-    this.broker = await AuthBroker.create({
+    this.broker = AuthBroker.deferred({
       authPath: this.options.authPath ?? join(homedir(), '.pi/agent/auth.json'),
       poolConfigPath: this.options.poolConfigPath ?? join(homedir(), '.pi/agent/multi-pass.json'),
       poolName: this.options.poolName,
@@ -69,7 +69,7 @@ export class PiCompatService extends Service<Config> {
     // A conflicting existing route fails explicitly; never steal a live registration.
     this.ctx.llm.registerAdapter(['openai-codex'], this.adapter);
     this.ctx.effect(() => this.ctx.commands.register({ name: 'codex-pool', description: 'Shared Pi Codex pool status (cached; no network request)',
-      handler: () => ({ kind: 'success', text: JSON.stringify({ ...this.broker.pool.status(), nativeCompaction: this.nativeCompaction, authentication: 'Managed by Pi; no separate DSH login' }, null, 2) }),
+      handler: () => ({ kind: 'success', text: JSON.stringify({ ...this.broker.status(), nativeCompaction: this.nativeCompaction, authentication: 'Managed by Pi; no separate DSH login' }, null, 2) }),
     }));
     this.ctx.on('system-prompt/assemble', async (_assembly, { agent }, next) => {
       const assembled = await next();

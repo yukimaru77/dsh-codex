@@ -282,7 +282,7 @@ test('provider review: current Cordis service init registers actual DSH adapter 
   t.after(() => rm(directory, { recursive: true, force: true }));
   const f = fixture();
   let creates = 0;
-  t.mock.method(AuthBroker, 'create', async () => { creates++; return f.broker; });
+  t.mock.method(AuthBroker, 'deferred', () => { creates++; return f.broker; });
   const ctx = new Context();
   const commands = new Set<string>();
   ctx.provide('commands', { register: (definition: { name: string }) => {
@@ -312,4 +312,23 @@ test('provider review: current Cordis service init registers actual DSH adapter 
   assert.deepEqual([...commands], []);
   await assert.rejects(ctx.llm.resolveModelInfo('openai-codex', f.model.id), { code: 'NO_ADAPTER' });
   assert.equal(f.authCount(), 0);
+});
+
+test('provider review: service starts without a Pi login and the first Codex request reports it', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'dsh-provider-review-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const ctx = new Context();
+  ctx.provide('commands', { register: () => () => {} });
+  ctx.provide('agents', { list: () => [] });
+  const llmFiber = await ctx.plugin(LlmRuntime);
+  const serviceFiber = await ctx.plugin(PiCompatService, {
+    authPath: join(directory, 'missing-auth.json'), poolConfigPath: join(directory, 'missing-pool.json'),
+    settingsDirectory: join(directory, 'settings'), piTierConfigPath: join(directory, 'missing-tier.json'),
+  });
+  t.after(async () => { await serviceFiber.dispose(); await llmFiber.dispose(); });
+  assert.ok(ctx.piCompat.adapter instanceof PooledCodexAdapter);
+  assert.equal(ctx.piCompat.broker.status().opened, false);
+  await assert.rejects(ctx.piCompat.broker.acquire('chat'), { code: 'NO_POOL_CONFIG' });
+  // A later login is picked up: the failed open is not cached.
+  await assert.rejects(ctx.piCompat.broker.acquire('chat'), { code: 'NO_POOL_CONFIG' });
 });

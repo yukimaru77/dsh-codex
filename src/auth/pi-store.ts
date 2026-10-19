@@ -1,5 +1,5 @@
-import { dirname, resolve } from 'node:path';
-import { stat } from 'node:fs/promises';
+import { delimiter, dirname, join, resolve } from 'node:path';
+import { readFile, realpath, stat } from 'node:fs/promises';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import type { AuthOperationOptions, Credential, CredentialInfo, CredentialStore } from '@earendil-works/pi-ai';
 import { PoolError } from './pool.ts';
@@ -80,9 +80,51 @@ export async function openPiBackend(authPath: string): Promise<LockedBackend> {
   const mode = await stat(authPath).catch(() => undefined);
   if (!mode?.isFile()) throw new PoolError('NO_AUTH_STORE', 'Pi authentication file is missing.');
   if (process.platform !== 'win32' && (mode.mode & 0o077) !== 0) throw new PoolError('AUTH_PERMISSIONS', 'Pi auth file must be readable/writable only by its owner.');
-  const piEntry = fileURLToPath(import.meta.resolve('@earendil-works/pi-coding-agent'));
+  const piEntry = await findPiEntry();
   const backendPath = resolve(dirname(piEntry), 'core/auth-storage.js');
   const module = await import(pathToFileURL(backendPath).href) as { FileAuthStorageBackend: new (path: string) => LockedBackend };
   if (typeof module.FileAuthStorageBackend !== 'function') throw new PoolError('PI_API_CHANGED', 'Pi credential locking API changed; refusing unsafe access.');
   return new module.FileAuthStorageBackend(authPath);
+}
+
+const PI_PACKAGE = '@earendil-works/pi-coding-agent';
+
+/** The Pi package directory owning `start`, walking up from a file inside it. */
+async function piPackageDirFrom(start: string): Promise<string | undefined> {
+  for (let current = dirname(start); ; current = dirname(current)) {
+    const manifest = await readFile(join(current, 'package.json'), 'utf8').then(JSON.parse, () => undefined) as { name?: unknown } | undefined;
+    if (manifest?.name === PI_PACKAGE) return current;
+    if (dirname(current) === current) return undefined;
+  }
+}
+
+/** The ESM entry of a Pi package directory, read from its manifest. */
+async function piEntryOf(directory: string): Promise<string> {
+  const manifest = JSON.parse(await readFile(join(directory, 'package.json'), 'utf8')) as { name?: unknown; main?: unknown; exports?: Record<string, unknown> };
+  if (manifest.name !== PI_PACKAGE) throw new PoolError('PI_NOT_FOUND', `${directory} is not the ${PI_PACKAGE} package.`);
+  const root = manifest.exports?.['.'];
+  const conditions = root !== null && typeof root === 'object' ? root as Record<string, unknown> : undefined;
+  const target = typeof root === 'string' ? root : conditions ? conditions.import ?? conditions.default : manifest.main;
+  if (typeof target !== 'string') throw new PoolError('PI_API_CHANGED', 'Pi package entry could not be determined; refusing unsafe access.');
+  return resolve(directory, target);
+}
+
+/**
+ * Locate the Pi installation whose lock implementation guards auth.json:
+ * `PI_PACKAGE_DIR`, then a package resolvable from this bundle, then the `pi`
+ * command on PATH (a global install that a DSH profile does not carry).
+ */
+async function findPiEntry(): Promise<string> {
+  const configured = process.env.PI_PACKAGE_DIR;
+  if (configured) return piEntryOf(await realpath(configured));
+  try { return fileURLToPath(import.meta.resolve(PI_PACKAGE)); } catch { /* not resolvable from this bundle */ }
+  for (const directory of (process.env.PATH ?? '').split(delimiter)) {
+    if (!directory) continue;
+    for (const name of process.platform === 'win32' ? ['pi.cmd', 'pi'] : ['pi']) {
+      const command = await realpath(join(directory, name)).catch(() => undefined);
+      const packageDir = command && await piPackageDirFrom(command);
+      if (packageDir) return piEntryOf(packageDir);
+    }
+  }
+  throw new PoolError('PI_NOT_FOUND', 'Pi (@earendil-works/pi-coding-agent) was not found; install Pi or set PI_PACKAGE_DIR.');
 }
