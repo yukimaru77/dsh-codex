@@ -1,0 +1,36 @@
+{
+  "name": "dsh-pi-compat",
+  "version": "0.1.0-local",
+  "private": true,
+  "type": "module",
+  "description": "Pi-compatible Codex authentication, tools, compaction and session settings for DeepSeek Harness",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/yukimaru77/dsh-pi-compat.git" },
+  "engines": { "node": ">=24.0.0" },
+  "exports": {
+    ".": "./lib/index.js",
+    "./tools": "./lib/agent-entry.js",
+    "./compaction": "./lib/compaction-entry.js",
+    "./other-providers": "./lib/other-providers.js"
+  },
+  "dsh": { "bundle": { "patch": ["./cordis.patch.yml", "./cordis.web.patch.yml"] } },
+  "scripts": {
+    "bootstrap": "node scripts/bootstrap.mjs",
+    "test": "node --import tsx --test --test-timeout=10000 tests/*.test.ts",
+    "test:smoke": "node --import tsx scripts/smoke.ts",
+    "test:smoke:web": "node --import tsx scripts/smoke-web.ts",
+    "build": "node --import tsx scripts/build.ts",
+    "typecheck": "node node_modules/typescript/bin/tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.5",
+    "@earendil-works/pi-ai": "1.1.0",
+    "@earendil-works/pi-coding-agent": "1.1.0",
+    "@deepseek-ai/dsh-compaction-basic": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-commands": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-agent": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-llm-pi-ai": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.2"
+  }
+}

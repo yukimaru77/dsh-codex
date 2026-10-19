@@ -1,0 +1,17 @@
+node_modules/
+lib/
+presets/
+cordis.patch.yml
+cordis.tui.patch.yml
+cordis.web.patch.yml
+*.local.yml
+*.local.yaml
+.env
+.env.*
+*.log
+.DS_Store
+backups/
+reports/
+auth.json
+multi-pass.json
+service-tier.json

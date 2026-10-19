@@ -1,0 +1,13 @@
+{
+  "standardLogin": true,
+  "pools": [
+    {
+      "name": "codex",
+      "enabled": true,
+      "baseProvider": "openai-codex",
+      "strategy": "custom",
+      "selectionTiming": "auth-use",
+      "members": ["openai-codex-1", "openai-codex-2"]
+    }
+  ]
+}
