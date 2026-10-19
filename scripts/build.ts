@@ -3,7 +3,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('../', import.meta.url));
-await build({ cwd: root, entry: ['src/index.ts', 'src/agent-entry.ts', 'src/compaction-entry.ts', 'src/other-providers.ts'],
+await build({ cwd: root, entry: ['src/index.ts', 'src/agent-entry.ts', 'src/compaction-entry.ts', 'src/other-providers.ts', 'src/payload.ts'],
   outDir: 'lib', format: 'esm', outExtensions: () => ({ js: '.js' }), platform: 'node', target: 'node24', sourcemap: true, clean: true, dts: false,
   external: id => !id.startsWith('.') && !id.startsWith('/') && !/^@deepseek-ai\/dsh-llm-pi-ai\/src\//.test(id),
   noExternal: [/^@deepseek-ai\/dsh-llm-pi-ai\/src\//],

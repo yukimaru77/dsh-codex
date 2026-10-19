@@ -150,6 +150,16 @@ npm run test:smoke:web
 別のprofileを使う場合は `DSH_TUI_PROFILE_SOURCE` / `DSH_WEB_PROFILE_SOURCE`、
 CLIの実行ファイルを指定する場合は `DSH_CLI` を設定できます。
 
+## Plugin API
+
+別の拡張は `ctx.piCompat.adapter.registerPayloadTransform(id, transform)` で
+Codexの送信payloadを加工できます。型は `dsh-pi-compat/payload` の
+`PayloadTransform` / `PayloadTransformRequest` / `PayloadTransformRegistry` を使用します。
+transformにはpayloadと元のDSH `messages`、`purpose`、`sessionId`、`signal` が渡ります。
+通常streamとnative compaction用serializerの両方でtier適用後に登録順で実行され、
+返したpayloadを次へ渡します。Promiseにも対応し、例外が出た場合は送信を止めます。
+同じidの重複登録はエラーです。返された解除関数を拡張のdispose時に呼んでください。
+
 ## 現在の制約
 
 - DSH内部APIとPiの認証ストアAPIに依存する開発版です。依存更新時には再ビルドと検証が必要です。

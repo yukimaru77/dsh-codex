@@ -1,10 +1,13 @@
-import { test } from 'node:test';
+import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { Context } from '@deepseek-ai/cordis';
 import { createUserMessage, createSystemMessage, LlmRuntime } from '@deepseek-ai/dsh-llm';
+import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm';
+import type { PayloadTransform } from 'dsh-pi-compat/payload';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { zstdDecompressSync } from 'node:zlib';
 import { PiCompatService } from '../src/service.ts';
 import { CompactionId, compactCheckpointSource } from '@deepseek-ai/dsh-compaction';
 import { openAICodexResponsesApi } from '@earendil-works/pi-ai/api/openai-codex-responses.lazy';
@@ -116,6 +119,95 @@ test('provider review: native serialization retains configured reasoning', async
   const f = fixture();
   const request = await f.adapter.nativeRequest(input(), f.agent);
   assert.equal((request?.payload.reasoning as { effort?: string } | undefined)?.effort, 'high');
+});
+
+test('payload transforms: native requests compose in order after tier and unregister independently', async t => {
+  const f = fixture();
+  const source = input();
+  const abort = new AbortController();
+  t.mock.method(globalThis, 'fetch', async () => { throw new Error('No network during serialization'); });
+  const first: PayloadTransform = async (payload, request) => {
+    assert.equal(payload.service_tier, 'priority');
+    assert.deepEqual(request.messages, source.messages);
+    assert.equal(request.purpose, 'compaction');
+    assert.equal(request.sessionId, String(f.agent.session.id));
+    assert.equal(request.signal, abort.signal);
+    await Promise.resolve();
+    return { ...payload, instructions: `${payload.instructions} First.` };
+  };
+  const removeFirst = f.adapter.registerPayloadTransform('first', first);
+  assert.throws(() => f.adapter.registerPayloadTransform('first', first), /already registered/);
+  const removeSecond = f.adapter.registerPayloadTransform('second', payload => ({ ...payload, instructions: `${payload.instructions} Second.` }));
+  const capture = async () => (await f.adapter.nativeRequest(source, f.agent, abort.signal))!.payload;
+  assert.equal((await capture()).instructions, 'Synthetic system prefix. First. Second.');
+  removeFirst();
+  assert.equal((await capture()).instructions, 'Synthetic system prefix. Second.');
+  const removeReplacement = f.adapter.registerPayloadTransform('first', first);
+  removeFirst(); // A stale disposer must not remove a newer registration with this id.
+  assert.equal((await capture()).instructions, 'Synthetic system prefix. Second. First.');
+  removeSecond(); removeReplacement();
+  assert.equal((await capture()).instructions, 'Synthetic system prefix.');
+  assert.equal(f.authCount(), 0);
+});
+
+function streamingFixture(t: TestContext) {
+  const f = fixture();
+  const sent: Record<string, unknown>[] = [];
+  const fake = `x.${Buffer.from(JSON.stringify({ 'https://api.openai.com/auth': { chatgpt_account_id: 'fixture-only' } })).toString('base64url')}.x`;
+  t.mock.method(f.broker, 'acquire', async () => ({ provider: 'openai-codex-1', apiKey: fake, accountId: 'fixture-only', headers: {} }));
+  t.mock.method(globalThis, 'fetch', async (...[_url, init]: Parameters<typeof fetch>) => {
+    const body = new Headers(init?.headers).get('content-encoding') === 'zstd'
+      ? zstdDecompressSync(init!.body as Uint8Array).toString('utf8') : String(init?.body);
+    sent.push(JSON.parse(body));
+    const message = { id: 'msg_fixture', type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Fixture reply.' }] };
+    const events = [
+      { type: 'response.output_item.done', output_index: 0, item: message },
+      { type: 'response.completed', response: { id: 'resp_fixture', status: 'completed', output: [message], usage: { input_tokens: 1, output_tokens: 1 } } },
+    ];
+    return new Response(events.map(event => `data: ${JSON.stringify(event)}\n\n`).join(''), { headers: { 'content-type': 'text/event-stream' } });
+  });
+  const options: GenerateOptions = { ...input(), provider: 'openai-codex', model: f.model.id, sessionId: f.agent.session.id, purpose: 'session-title' };
+  const collect = async () => {
+    const chunks: StreamChunk[] = [];
+    for await (const chunk of f.adapter.stream(options)) chunks.push(chunk);
+    return chunks;
+  };
+  return { ...f, sent, options, collect };
+}
+
+test('payload transforms: real stream sends ordered changes and original body after disposal', async t => {
+  const f = streamingFixture(t);
+  const removeFirst = f.adapter.registerPayloadTransform('first', async (payload, request) => {
+    assert.equal(payload.service_tier, 'priority');
+    assert.strictEqual(request.messages, f.options.messages);
+    assert.equal(request.purpose, 'session-title');
+    assert.equal(request.sessionId, String(f.agent.session.id));
+    assert.ok(request.signal instanceof AbortSignal);
+    return { ...payload, instructions: `${payload.instructions} First.` };
+  });
+  const removeSecond = f.adapter.registerPayloadTransform('second', payload => ({ ...payload, instructions: `${payload.instructions} Second.` }));
+  assert.deepEqual((await f.collect()).find(chunk => chunk.type === 'finish')?.reason, { kind: 'stop' });
+  assert.equal(f.sent[0].instructions, 'Synthetic system prefix. First. Second.');
+  removeFirst(); removeSecond();
+  assert.deepEqual((await f.collect()).find(chunk => chunk.type === 'finish')?.reason, { kind: 'stop' });
+  assert.equal(f.sent[1].instructions, 'Synthetic system prefix.');
+  assert.equal(f.sent[1].service_tier, 'priority');
+});
+
+test('payload transforms: rejection prevents both stream sending and native request creation', async t => {
+  const f = streamingFixture(t);
+  let laterCalls = 0;
+  const remove = f.adapter.registerPayloadTransform('reject', async () => { throw new Error('Fixture transform rejected'); });
+  const removeLater = f.adapter.registerPayloadTransform('later', payload => { laterCalls++; return payload; });
+  const chunks = await f.collect();
+  assert.ok(chunks.some(chunk => chunk.type === 'finish' && chunk.reason.kind === 'error' && chunk.reason.failure.message.includes('Fixture transform rejected')));
+  await assert.rejects(f.adapter.nativeRequest(input(), f.agent), /Fixture transform rejected/);
+  assert.equal(f.sent.length, 0);
+  assert.equal(laterCalls, 0);
+  remove(); removeLater();
+  assert.deepEqual((await f.collect()).find(chunk => chunk.type === 'finish')?.reason, { kind: 'stop' });
+  assert.equal(f.sent.length, 1);
+  assert.equal((await f.adapter.nativeRequest(input(), f.agent))?.payload.instructions, 'Synthetic system prefix.');
 });
 
 test('portable serializer: foreign transcript preserves DSH system/tools but uses real Luna defaults', async t => {

@@ -16,6 +16,7 @@ import { ServiceTierSettingsHelper, effectiveContextCapacity } from './tier/inde
 import type { NativeCompactionRequest } from './compact/transport.ts';
 import type { SummarizationInput } from '@deepseek-ai/dsh-compaction-basic/src/summarizer.ts';
 import type { Agent } from '@deepseek-ai/dsh-agent';
+import type { PayloadTransform, PayloadTransformRegistry, PayloadTransformRequest } from './payload.ts';
 
 export interface ProviderOptions {
   contextWindow?: number;
@@ -26,10 +27,31 @@ export interface ProviderOptions {
   routeFor?: (agent: Agent) => Partial<LlmCallConfig>;
 }
 /** Reuses DSH's actual serialization, metadata and stream adapters, not a parallel agent loop. */
-export class PooledCodexAdapter extends LlmAdapter {
+export class PooledCodexAdapter extends LlmAdapter implements PayloadTransformRegistry {
   private readonly delegate: PiAiAdapter;
   private readonly profiles;
   private readonly capacities = new AsyncLocalStorage<number | undefined>();
+  private readonly payloadTransforms = new Map<string, PayloadTransform>();
+  registerPayloadTransform(id: string, transform: PayloadTransform): () => void {
+    if (this.payloadTransforms.has(id)) throw new Error(`Payload transform already registered: ${id}`);
+    this.payloadTransforms.set(id, transform);
+    let active = true;
+    return () => {
+      if (!active) return;
+      active = false;
+      this.payloadTransforms.delete(id);
+    };
+  }
+  private async transformPayload(payload: Record<string, unknown>, request: PayloadTransformRequest): Promise<Record<string, unknown>> {
+    // A request uses the registration order present when its transform pass starts.
+    const transforms = [...this.payloadTransforms.values()];
+    request.signal?.throwIfAborted();
+    for (const transform of transforms) {
+      payload = await transform(payload, request);
+      request.signal?.throwIfAborted();
+    }
+    return payload;
+  }
   withContextCapacity<T>(cap: number | undefined, run: () => T): T { return this.capacities.run(cap, run); }
   private capacity(real: number): number { return effectiveContextCapacity(effectiveContextCapacity(real, this.options.contextWindow), this.capacities.getStore()); }
   constructor(private readonly ctx: CordisContext, readonly broker: AuthBroker, readonly tier: ServiceTierSettingsHelper, private readonly options: ProviderOptions = {}) {
@@ -94,7 +116,9 @@ export class PooledCodexAdapter extends LlmAdapter {
         sessionId: options.sessionId === undefined ? undefined : String(options.sessionId),
         reasoning: (reasoning === 'off' ? undefined : reasoning) as SimpleStreamOptions['reasoning'],
         temperature: options.temperature, maxTokens: options.maxTokens,
-        onPayload: (payload, resolved) => tier(payload, resolved),
+        onPayload: async (payload, resolved) => this.transformPayload(await tier(payload, resolved) as Record<string, unknown>, {
+          messages: options.messages, purpose: options.purpose, sessionId, signal: watchdog.signal,
+        }),
         onResponse: response => {
           if (response.status === 429) this.broker.pool.markLimited(lease.provider);
         },
@@ -134,6 +158,9 @@ export class PooledCodexAdapter extends LlmAdapter {
     signal?.throwIfAborted();
     if (!payload) throw new Error('Codex serializer failed before producing a compaction request');
     const withTier = await this.tier.requestHook(String(agent.session.id))(payload, model);
-    return { model: model.id, portable, payload: withTier as Record<string, any>, checkpointTexts: checkpoints, sessionId: String(agent.session.id), signal };
+    const transformed = await this.transformPayload(withTier as Record<string, unknown>, {
+      messages: options.messages, purpose: options.purpose, sessionId: String(agent.session.id), signal,
+    });
+    return { model: model.id, portable, payload: transformed, checkpointTexts: checkpoints, sessionId: String(agent.session.id), signal };
   }
 }

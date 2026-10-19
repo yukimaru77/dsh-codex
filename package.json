@@ -11,7 +11,8 @@
     ".": "./lib/index.js",
     "./tools": "./lib/agent-entry.js",
     "./compaction": "./lib/compaction-entry.js",
-    "./other-providers": "./lib/other-providers.js"
+    "./other-providers": "./lib/other-providers.js",
+    "./payload": { "types": "./src/payload.ts", "default": "./lib/payload.js" }
   },
   "dsh": { "bundle": { "patch": ["./cordis.patch.yml", "./cordis.web.patch.yml"] } },
   "scripts": {
