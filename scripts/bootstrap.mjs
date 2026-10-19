@@ -13,7 +13,7 @@ if (process.argv.length > 4) {
   console.error('Or set DSH_INSTALL and PI_PACKAGE_DIR. Defaults: the `dsh` command on PATH; Pi is optional.');
   process.exit(1);
 }
-if (Number(process.versions.node.split('.')[0]) < 24) throw new Error('Node.js 24 or newer is required');
+if (Number(process.versions.node.split('.')[0]) < 22) throw new Error('Node.js 22.19 or newer is required');
 const manifest = async directory => JSON.parse(await readFile(join(directory, 'package.json'), 'utf8'));
 
 /** The node_modules directory holding the `@deepseek-ai/dsh` package that the `dsh` command runs. */

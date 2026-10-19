@@ -105,31 +105,34 @@ export class PooledCodexAdapter extends LlmAdapter implements PayloadTransformRe
     const lease = await this.broker.acquire(options.purpose === 'compaction' ? 'compact' : 'chat', options.model, options.signal);
     const consumer = new AbortController();
     const signal = options.signal ? AbortSignal.any([consumer.signal, options.signal]) : consumer.signal;
-    using watchdog = idleWatchdog(signal, this.options.streamIdleTimeoutMs ?? 120_000, 'LLM_STREAM_IDLE_TIMEOUT');
-    const replay = replayPayloadHook(options.messages);
-    const tier = this.tier.requestHook(options.sessionId === undefined ? undefined : String(options.sessionId), replay);
+    // Disposed explicitly instead of with `using`, so the bundle also loads on Node 22 hosts.
+    const watchdog = idleWatchdog(signal, this.options.streamIdleTimeoutMs ?? 120_000, 'LLM_STREAM_IDLE_TIMEOUT');
     try {
-      const context = await this.context({ ...options, signal: watchdog.signal });
-      const streamOptions: SimpleStreamOptions = {
-        apiKey: lease.apiKey, headers: { ...lease.headers, ...attributionHeaders() },
-        signal: watchdog.signal, transport: 'sse', maxRetries: 0,
-        sessionId: options.sessionId === undefined ? undefined : String(options.sessionId),
-        reasoning: (reasoning === 'off' ? undefined : reasoning) as SimpleStreamOptions['reasoning'],
-        temperature: options.temperature, maxTokens: options.maxTokens,
-        onPayload: async (payload, resolved) => this.transformPayload(await tier(payload, resolved) as Record<string, unknown>, {
-          messages: options.messages, purpose: options.purpose, sessionId, signal: watchdog.signal,
-        }),
-        onResponse: response => {
-          if (response.status === 429) this.broker.pool.markLimited(lease.provider);
-        },
-      };
-      const events = codexStream(model, normalizeContext(context), streamOptions);
-      const iterator = toStreamChunks(events, model.contextWindow, options.signal, model.id)[Symbol.asyncIterator]();
-      let ended = false;
+      const replay = replayPayloadHook(options.messages);
+      const tier = this.tier.requestHook(options.sessionId === undefined ? undefined : String(options.sessionId), replay);
       try {
-        while (true) { const result = await watchdog.next(iterator); if (result.done) { ended = true; return; } yield result.value; }
-      } finally { if (!ended) { consumer.abort(); void iterator.return(undefined).catch(() => {}); } }
-    } finally { consumer.abort(); }
+        const context = await this.context({ ...options, signal: watchdog.signal });
+        const streamOptions: SimpleStreamOptions = {
+          apiKey: lease.apiKey, headers: { ...lease.headers, ...attributionHeaders() },
+          signal: watchdog.signal, transport: 'sse', maxRetries: 0,
+          sessionId: options.sessionId === undefined ? undefined : String(options.sessionId),
+          reasoning: (reasoning === 'off' ? undefined : reasoning) as SimpleStreamOptions['reasoning'],
+          temperature: options.temperature, maxTokens: options.maxTokens,
+          onPayload: async (payload, resolved) => this.transformPayload(await tier(payload, resolved) as Record<string, unknown>, {
+            messages: options.messages, purpose: options.purpose, sessionId, signal: watchdog.signal,
+          }),
+          onResponse: response => {
+            if (response.status === 429) this.broker.pool.markLimited(lease.provider);
+          },
+        };
+        const events = codexStream(model, normalizeContext(context), streamOptions);
+        const iterator = toStreamChunks(events, model.contextWindow, options.signal, model.id)[Symbol.asyncIterator]();
+        let ended = false;
+        try {
+          while (true) { const result = await watchdog.next(iterator); if (result.done) { ended = true; return; } yield result.value; }
+        } finally { if (!ended) { consumer.abort(); void iterator.return(undefined).catch(() => {}); } }
+      } finally { consumer.abort(); }
+    } finally { watchdog[Symbol.dispose](); }
   }
   /** Capture pi-ai's exact request serializer without acquiring auth or sending any request. */
   async nativeRequest(input: SummarizationInput, agent: Agent, signal?: AbortSignal): Promise<NativeCompactionRequest | undefined> {

@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('../', import.meta.url));
 await build({ cwd: root, entry: ['src/index.ts', 'src/agent-entry.ts', 'src/compaction-entry.ts', 'src/other-providers.ts', 'src/payload.ts'],
-  outDir: 'lib', format: 'esm', outExtensions: () => ({ js: '.js' }), platform: 'node', target: 'node24', sourcemap: true, clean: true, dts: false,
+  outDir: 'lib', format: 'esm', outExtensions: () => ({ js: '.js' }), platform: 'node', target: 'node22', sourcemap: true, clean: true, dts: false,
   // Every package import stays external and resolves to the running DSH installation;
   // only this repository's sources (including src/vendor) are bundled.
   external: id => !id.startsWith('.') && !id.startsWith('/'),
