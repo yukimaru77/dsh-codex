@@ -1,6 +1,6 @@
 /** Optional DSH service plugin. Install INSTEAD OF compaction-basic, not beside it. */
 import { BasicCompactionEngine, type BasicCompactionConfig } from '@deepseek-ai/dsh-compaction-basic';
-import type { SummarizationInput, SummaryResult } from '@deepseek-ai/dsh-compaction-basic/src/summarizer.ts';
+import type { SummarizationInput, SummaryResult } from '../vendor/dsh-compaction-basic/summarizer-types.ts';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import { createNativeSummarizer } from './index.ts';
 import type { NativeCompactionOptions, NativeCompactionRequest } from './transport.ts';

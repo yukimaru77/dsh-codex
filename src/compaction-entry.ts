@@ -1,7 +1,7 @@
 import { BasicCompactionEngine } from '@deepseek-ai/dsh-compaction-basic';
 import type { Context } from '@deepseek-ai/cordis';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import type { SummarizationInput, SummaryResult } from '@deepseek-ai/dsh-compaction-basic/src/summarizer.ts';
+import type { SummarizationInput, SummaryResult } from './vendor/dsh-compaction-basic/summarizer-types.ts';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import { requestNativeCompaction, type CompactionAuth } from './compact/transport.ts';
 import { checkpointTexts, decodeCheckpoint } from './compact/checkpoint.ts';

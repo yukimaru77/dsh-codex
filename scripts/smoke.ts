@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, writeFile, cp, copyFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, cp, copyFile, rm, symlink } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -13,6 +13,12 @@ try {
   await copyFile(join(source, 'package.json'), join(profile, 'package.json'));
   await cp(join(source, 'node_modules'), join(profile, 'node_modules'), { recursive: true, dereference: false, verbatimSymlinks: true });
   await writeFile(join(profile, 'cordis.patch.yml'), '[]\n');
+  // Exercise this checkout as the profile's dsh-pi-compat bundle, as an installed profile loads it.
+  await rm(join(profile, 'node_modules/dsh-pi-compat'), { recursive: true, force: true });
+  await symlink(root, join(profile, 'node_modules/dsh-pi-compat'), 'junction');
+  const bundled = JSON.parse(await readFile(join(profile, 'package.json'), 'utf8'));
+  if (!bundled.dsh.profile.bundles.includes('dsh-pi-compat')) bundled.dsh.profile.bundles.push('dsh-pi-compat');
+  await writeFile(join(profile, 'package.json'), JSON.stringify(bundled, null, 2));
   if (process.env.DSH_SSH_PRODUCT_SOURCE) {
     const product = process.env.DSH_SSH_PRODUCT_SOURCE;
     const productManifest = JSON.parse(await readFile(join(product, 'package.json'), 'utf8'));
@@ -28,7 +34,7 @@ try {
   await writeFile(join(scratch, 'no-network.mjs'), "globalThis.fetch = async () => { throw new Error('Live network forbidden during smoke'); };\n");
   await writeFile(join(scratch, 'smoke.patch.yml'), `- id: dsh-tui\n  disabled: true\n- id: hmr\n  disabled: true\n- id: pi-compatible\n  config:\n    authPath: ${JSON.stringify(join(scratch, 'auth.json'))}\n    poolConfigPath: ${JSON.stringify(join(scratch, 'pool.json'))}\n    piTierConfigPath: ${JSON.stringify(join(scratch, 'no-tier.json'))}\n    settingsDirectory: ${JSON.stringify(join(scratch, 'settings'))}\n- insert:\n    - id: pi-compat-smoke-probe\n      name: ${JSON.stringify(join(root, 'scripts/smoke-probe.mjs'))}\n`);
   const cli = process.env.DSH_CLI ?? fileURLToPath(import.meta.resolve('@deepseek-ai/dsh/lib/bin.js'));
-  const result = spawnSync(process.execPath, [cli, '--profile', 'dsh-tui', '--patch', join(root, 'cordis.patch.yml'), '--patch', join(root, 'cordis.tui.patch.yml'), '--patch', join(scratch, 'smoke.patch.yml')], {
+  const result = spawnSync(process.execPath, [cli, '--profile', 'dsh-tui', '--patch', join(root, 'cordis.tui.patch.yml'), '--patch', join(scratch, 'smoke.patch.yml')], {
     cwd: scratch, env: { ...process.env, HOME: scratch, DSH_HOME: home, DSH_TELEMETRY: '0', NODE_OPTIONS: `--import=${join(scratch, 'no-network.mjs')}` }, encoding: 'utf8', timeout: 20000, maxBuffer: 1024 * 1024, killSignal: 'SIGKILL',
   });
   process.stdout.write(result.stdout ?? ''); process.stderr.write(result.stderr ?? '');

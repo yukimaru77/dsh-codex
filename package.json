@@ -5,33 +5,86 @@
   "type": "module",
   "description": "Pi-compatible Codex authentication, tools, compaction and session settings for DeepSeek Harness",
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://github.com/yukimaru77/dsh-pi-compat.git" },
-  "engines": { "node": ">=24.0.0" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yukimaru77/dsh-pi-compat.git"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "exports": {
     ".": "./lib/index.js",
     "./tools": "./lib/agent-entry.js",
     "./compaction": "./lib/compaction-entry.js",
     "./other-providers": "./lib/other-providers.js",
-    "./payload": { "types": "./src/payload.ts", "default": "./lib/payload.js" }
+    "./payload": {
+      "types": "./src/payload.ts",
+      "default": "./lib/payload.js"
+    }
   },
-  "dsh": { "bundle": { "patch": ["./cordis.patch.yml", "./cordis.web.patch.yml"] } },
+  "dsh": {
+    "bundle": {
+      "patch": [
+        "./cordis.patch.yml",
+        "./cordis.web.patch.yml"
+      ]
+    }
+  },
   "scripts": {
     "bootstrap": "node scripts/bootstrap.mjs",
     "test": "node --import tsx --test --test-timeout=10000 tests/*.test.ts",
     "test:smoke": "node --import tsx scripts/smoke.ts",
     "test:smoke:web": "node --import tsx scripts/smoke-web.ts",
     "build": "node --import tsx scripts/build.ts",
-    "typecheck": "node node_modules/typescript/bin/tsc --noEmit"
+    "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.5",
-    "@earendil-works/pi-ai": "1.1.0",
-    "@earendil-works/pi-coding-agent": "1.1.0",
-    "@deepseek-ai/dsh-compaction-basic": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-commands": "0.2.1-rc.2",
     "@deepseek-ai/dsh-agent": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-attachment": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-brand": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-commands": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-compaction-basic": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-credentials": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-fs": "0.2.1-rc.2",
     "@deepseek-ai/dsh-llm": "0.2.1-rc.2",
     "@deepseek-ai/dsh-llm-pi-ai": "0.2.1-rc.2",
-    "@deepseek-ai/dsh-tools": "0.2.1-rc.2"
+    "@deepseek-ai/dsh-sandbox": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-sandbox-policy": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-subprocess": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-timeout": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-user-approval": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-util-values": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-working-directory": "0.2.1-rc.2",
+    "@deepseek-ai/schemastery": "^3.18.5",
+    "@earendil-works/pi-ai": "^1.1.0",
+    "@earendil-works/pi-coding-agent": "1.1.0"
+  },
+  "files": [
+    "lib",
+    "src/payload.ts",
+    "presets",
+    "cordis.patch.yml",
+    "cordis.web.patch.yml",
+    "cordis.tui.patch.yml",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "licenses"
+  ],
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-agent-loop-testkit": "0.2.1-rc.2",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^24.0.0",
+    "js-yaml": "^4.3.2",
+    "tsdown": "^0.22.2",
+    "tsx": "^4.23.13",
+    "typescript": "^6.0.3"
   }
 }

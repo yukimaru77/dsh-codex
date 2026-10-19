@@ -5,10 +5,19 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('../', import.meta.url));
 await build({ cwd: root, entry: ['src/index.ts', 'src/agent-entry.ts', 'src/compaction-entry.ts', 'src/other-providers.ts', 'src/payload.ts'],
   outDir: 'lib', format: 'esm', outExtensions: () => ({ js: '.js' }), platform: 'node', target: 'node24', sourcemap: true, clean: true, dts: false,
-  external: id => !id.startsWith('.') && !id.startsWith('/') && !/^@deepseek-ai\/dsh-llm-pi-ai\/src\//.test(id),
-  noExternal: [/^@deepseek-ai\/dsh-llm-pi-ai\/src\//],
+  // Every package import stays external and resolves to the running DSH installation;
+  // only this repository's sources (including src/vendor) are bundled.
+  external: id => !id.startsWith('.') && !id.startsWith('/'),
 });
-const plugin = (entry: string) => JSON.stringify(resolve(root, 'lib', entry + '.js'));
+// Package specifiers, not checkout paths: the profile installs this package and DSH
+// resolves these rows from the profile, so the generated YAML is location independent.
+const specifiers: Record<string, string> = {
+  'index': 'dsh-pi-compat',
+  'agent-entry': 'dsh-pi-compat/tools',
+  'compaction-entry': 'dsh-pi-compat/compaction',
+  'other-providers': 'dsh-pi-compat/other-providers',
+};
+const plugin = (entry: string) => JSON.stringify(specifiers[entry]);
 const standardPath = resolve(root, 'node_modules/@deepseek-ai/dsh-web-app/presets/standard.patch.yml');
 const original = await readFile(standardPath, 'utf8');
 const preset = original.replace('id: preset-standard', 'id: preset-pi-compatible')
