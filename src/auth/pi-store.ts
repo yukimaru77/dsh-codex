@@ -1,5 +1,6 @@
 import { delimiter, dirname, join, resolve } from 'node:path';
-import { readFile, realpath, stat } from 'node:fs/promises';
+import { readdir, readFile, realpath, stat } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import type { AuthOperationOptions, Credential, CredentialInfo, CredentialStore } from '@earendil-works/pi-ai';
 import { PoolError } from './pool.ts';
@@ -112,7 +113,8 @@ async function piEntryOf(directory: string): Promise<string> {
 /**
  * Locate the Pi installation whose lock implementation guards auth.json:
  * `PI_PACKAGE_DIR`, then a package resolvable from this bundle, then the `pi`
- * command on PATH (a global install that a DSH profile does not carry).
+ * command on PATH, then global installs of the running Node and of nodenv versions
+ * (a DSH profile does not carry the Pi package).
  */
 async function findPiEntry(): Promise<string> {
   const configured = process.env.PI_PACKAGE_DIR;
@@ -125,6 +127,15 @@ async function findPiEntry(): Promise<string> {
       const packageDir = command && await piPackageDirFrom(command);
       if (packageDir) return piEntryOf(packageDir);
     }
+  }
+  // Version-manager shims (nodenv, asdf) are scripts outside the package, so also
+  // try the global package directories of the running Node and of nodenv versions.
+  const globals = [resolve(dirname(process.execPath), '../lib/node_modules')];
+  const nodenvVersions = join(process.env.NODENV_ROOT ?? join(homedir(), '.nodenv'), 'versions');
+  for (const version of await readdir(nodenvVersions).catch(() => [])) globals.push(join(nodenvVersions, version, 'lib/node_modules'));
+  for (const directory of globals) {
+    const candidate = join(directory, PI_PACKAGE);
+    if (await stat(join(candidate, 'package.json')).catch(() => undefined)) return piEntryOf(await realpath(candidate));
   }
   throw new PoolError('PI_NOT_FOUND', 'Pi (@earendil-works/pi-coding-agent) was not found; install Pi or set PI_PACKAGE_DIR.');
 }
