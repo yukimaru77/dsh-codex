@@ -41,8 +41,8 @@ DSHの非公開ヘルパー（`dsh-llm-pi-ai` の `config` / `context` / `stream
 ## ビルド
 
 ```sh
-git clone https://github.com/yukimaru77/dsh-pi-compat.git
-cd dsh-pi-compat
+git clone https://github.com/yukimaru77/dsh-codex.git
+cd dsh-codex
 
 # ビルドツール（tsdown / tsx / typescript など）だけを入れる。DSHパッケージはpeer
 pnpm install --config.auto-install-peers=false
