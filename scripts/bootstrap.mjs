@@ -3,14 +3,14 @@ import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // Development setup only: link the DSH packages of an installed DeepSeek Harness
-// release (and, optionally, an installed Pi) into this checkout for build, typecheck
-// and tests. Never downloads packages and never changes the DSH or Pi installation.
+// release into this checkout for build, typecheck and tests. Never downloads
+// packages and never changes the DSH installation.
 // Build tools come from this package's own devDependencies (`pnpm install`).
 const expectedVersion = '0.2.1-rc.2';
 const root = fileURLToPath(new URL('../', import.meta.url));
-if (process.argv.length > 4) {
-  console.error('Usage: node scripts/bootstrap.mjs [/path/to/dsh-installation/node_modules] [/path/to/@earendil-works/pi-coding-agent]');
-  console.error('Or set DSH_INSTALL and PI_PACKAGE_DIR. Defaults: the `dsh` command on PATH; Pi is optional.');
+if (process.argv.length > 3) {
+  console.error('Usage: node scripts/bootstrap.mjs [/path/to/dsh-installation/node_modules]');
+  console.error('Or set DSH_INSTALL. Default: the `dsh` command on PATH.');
   process.exit(1);
 }
 if (Number(process.versions.node.split('.')[0]) < 22) throw new Error('Node.js 22.19 or newer is required');
@@ -40,15 +40,6 @@ for (const scope of ['@deepseek-ai', '@earendil-works']) {
     links.set(`${scope}/${name}`, join(installation, scope, name));
   }
 }
-const piPath = process.argv[3] ?? process.env.PI_PACKAGE_DIR;
-if (piPath) {
-  const pi = await realpath(resolve(piPath));
-  const piManifest = await manifest(pi);
-  if (piManifest.name !== '@earendil-works/pi-coding-agent') throw new Error('PI_PACKAGE_DIR must point to the installed @earendil-works/pi-coding-agent package');
-  if (piManifest.version !== '1.1.0') console.warn(`warning: Pi ${piManifest.version} is linked; this bundle is verified against 1.1.0`);
-  links.set(piManifest.name, pi);
-}
-
 // A rerun may refresh symlinks, but must not replace a real installed folder.
 for (const [name, directory] of links) {
   const destination = join(root, 'node_modules', name);

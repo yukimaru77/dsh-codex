@@ -7,7 +7,7 @@ import TokenMeter from '@deepseek-ai/dsh-token-meter';
 import { Session, SessionId, SessionSeq } from '@deepseek-ai/dsh-session';
 import { CompactionId, compactCheckpointSource } from '@deepseek-ai/dsh-compaction';
 import { createUserMessage, LlmAdapter, type StreamChunk, type LlmResolvedModelInfo } from '@deepseek-ai/dsh-llm';
-import PiCompatCompaction from '../src/compaction-entry.ts';
+import CodexCompaction from '../src/compaction-entry.ts';
 import { encodeCheckpoint, checkpointTexts } from '../src/compact/checkpoint.ts';
 import { portableSummary } from '../src/compact/portable.ts';
 
@@ -49,8 +49,8 @@ for (const native of [false, true]) for (const mode of ['success', 'failed', 'to
   await mountAgentLoopTestDependencies(ctx);
   const loop = await ctx.plugin(AgentLoop, { agents: [] });
   const meter = await ctx.plugin(TokenMeter);
-  const compat = compatibility(native); ctx.provide('piCompat', compat as any);
-  const plugin = await ctx.plugin(PiCompatCompaction, { auto: false });
+  const compat = compatibility(native); ctx.provide('codexPool', compat as any);
+  const plugin = await ctx.plugin(CodexCompaction, { auto: false });
   t.after(async () => { await plugin.dispose(); await meter.dispose(); await loop.dispose(); });
   const adapter = new Adapter(); ctx.llm.registerAdapter(['foreign', 'openai-codex'], adapter);
   const agent = await ctx.agentLoop.create(SessionId('portable-' + mode), compat.routeFor());
@@ -86,8 +86,8 @@ for (const native of [false, true]) for (const mode of ['success', 'failed', 'to
   }
 });
 for (const native of [false, true]) test(`new compaction native=${native} freezes existing broker lease across V2 and two extraction calls`, async t => {
-  const ctx = new Context(); const compat = compatibility(native); ctx.provide('piCompat', compat as any);
-  const engine = new PiCompatCompaction(ctx, { auto: false });
+  const ctx = new Context(); const compat = compatibility(native); ctx.provide('codexPool', compat as any);
+  const engine = new CodexCompaction(ctx, { auto: false });
   let calls = 0;
   t.mock.method(globalThis, 'fetch', async (_url: any, init: any) => {
     calls++; const body = JSON.parse(init.body); const compact = body.input.at(-1)?.type === 'compaction_trigger';
@@ -105,8 +105,8 @@ test('DSH media extraction refuses lossy text-only replacement', async () => {
     { accessToken: 'fake', accountId: 'fake' }, undefined, async () => response()), /NON_TEXT_RETAINED_INPUT/);
 });
 test('successful native V2 followed by failed Luna never returns a partial summary', async t => {
-  const ctx = new Context(); ctx.provide('piCompat', compatibility(true) as any);
-  const engine = new PiCompatCompaction(ctx, { auto: false });
+  const ctx = new Context(); ctx.provide('codexPool', compatibility(true) as any);
+  const engine = new CodexCompaction(ctx, { auto: false });
   let calls = 0;
   t.mock.method(globalThis, 'fetch', async (_url: any, init: any) => {
     calls++;

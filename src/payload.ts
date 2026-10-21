@@ -14,7 +14,7 @@ export type PayloadTransform = (
   request: PayloadTransformRequest,
 ) => Record<string, unknown> | Promise<Record<string, unknown>>;
 
-/** Structural plugin API exposed by ctx.piCompat.adapter. */
+/** Structural plugin API exposed by ctx.codexPool.adapter. */
 export interface PayloadTransformRegistry {
   registerPayloadTransform(id: string, transform: PayloadTransform): () => void;
 }

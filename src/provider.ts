@@ -58,9 +58,9 @@ export class PooledCodexAdapter extends LlmAdapter implements PayloadTransformRe
     super();
     this.profiles = resolveProfiles({ 'openai-codex': { reasoning: options.reasoning ?? 'medium', retryPolicy: { mode: 'normal', maxRetries: 3 } } });
     this.delegate = new PiAiAdapter({ profiles: () => this.profiles, resolveApiKey: async () => undefined,
-      auth: { credentials: { read: async () => undefined, list: async () => [], modify: async () => { throw new Error('Authentication is owned by the shared Pi broker'); }, delete: async () => { throw new Error('Manage authentication in Pi'); } }, authContext: { env: async () => undefined, fileExists: async () => false } } });
+      auth: { credentials: { read: async () => undefined, list: async () => [], modify: async () => { throw new Error('Authentication is owned by the Codex account pool'); }, delete: async () => { throw new Error('Manage authentication in Pi'); } }, authContext: { env: async () => undefined, fileExists: async () => false } } });
   }
-  override providerInfo(provider: string) { return { id: provider, name: 'OpenAI Codex · Pi account pool' }; }
+  override providerInfo(provider: string) { return { id: provider, name: 'OpenAI Codex · account pool' }; }
   override listModels(provider: string): Promise<readonly LlmModelInfo[]> { return this.delegate.listModels(provider); }
   override providerRetryPolicy() { return this.delegate.providerRetryPolicy('openai-codex'); }
   override async resolveModel(provider: string, id: string, signal?: AbortSignal): Promise<LlmResolvedModelInfo> {

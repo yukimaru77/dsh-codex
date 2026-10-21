@@ -1,20 +1,32 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { Context } from '@deepseek-ai/cordis';
+import { builtinModels } from '@earendil-works/pi-ai/providers/all';
 import { CodexPool, quotaFromUsage, weeklyResetSelector } from '../src/auth/pool.ts';
-import { PiAccountStore, type LockedBackend } from '../src/auth/pi-store.ts';
-import type { Credential } from '@earendil-works/pi-ai';
+import { DshAccountStore } from '../src/auth/store.ts';
+import { registerLoginFlows } from '../src/auth/login.ts';
+import type { Credential, OAuthAuth } from '@earendil-works/pi-ai';
+import type { CredentialProvider, CredentialRecord } from '@deepseek-ai/dsh-credentials';
 
-const a = 'openai-codex-2', b = 'openai-codex-3';
+const a = 'pepabo', b = 'yukimi';
 const token = (provider: string) => ({ provider, apiKey: `fixture-${provider}`, accountId: provider, headers: { 'chatgpt-account-id': provider } });
-function memory(initial: Record<string, Credential>) {
-  let current = JSON.stringify(initial), queue = Promise.resolve();
-  const backend: LockedBackend = { async withLockAsync(fn) {
-    const prior = queue; let release!: () => void; queue = new Promise<void>(r => { release = r; }); await prior;
-    try { const result = await fn(current); if (result.next) current = result.next; return result.result; } finally { release(); }
-  } };
-  return { backend, state: () => JSON.parse(current) };
+/** In-memory DSH credential store whose modifyRecord serializes like the real cross-process lock. */
+function memory(initial: Record<string, CredentialRecord> = {}) {
+  const records = new Map(Object.entries(initial));
+  let queue = Promise.resolve();
+  const provider = {
+    async readRecord(key: string) { return records.get(key); },
+    async modifyRecord(key: string, mutate: (current: CredentialRecord | undefined) => Promise<CredentialRecord | undefined>) {
+      const prior = queue; let release!: () => void; queue = new Promise<void>(r => { release = r; }); await prior;
+      try { const next = await mutate(records.get(key)); if (next) records.set(key, JSON.parse(JSON.stringify(next))); return records.get(key); } finally { release(); }
+    },
+    async deleteRecord(key: string) { records.delete(key); },
+  } as unknown as CredentialProvider;
+  return { provider, records };
 }
 const credential = (id: string, expires: number, access = 'fixture') => ({ type: 'oauth' as const, access, refresh: 'fixture-refresh', expires, accountId: id });
+const grant = (value: Credential): CredentialRecord => ({ kind: 'grant', payload: value });
+const stored = (m: { records: Map<string, CredentialRecord> }, key: string) => (m.records.get(key) as { payload: { access: string; accountId: string } }).payload;
 
 test('weekly selector uses minimum across windows, filters below 20%, prefers nearest future weekly reset', async () => {
   assert.equal(quotaFromUsage(a, { rate_limit: { primary_window: { used_percent: 40, limit_window_seconds: 18000 }, secondary_window: { used_percent: 70, limit_window_seconds: 604800, reset_at: 20 } } }).remainingPercent, 30);
@@ -36,7 +48,7 @@ test('all operations select before auth, share 30s quota cache, and preserve fro
   now = 30_001; await pool.acquire('web'); assert.equal(count, 3);
 });
 
-test('undefined selection retains previous member like Pi; no implicit arbitrary member', async () => {
+test('undefined selection retains the previous member; no implicit arbitrary member', async () => {
   const common = { members: [a, b], selector: async () => undefined, resolveAuth: async (p: string) => token(p), getQuota: async (provider: string) => ({ provider, kind: 'blocked' as const }) };
   assert.equal((await new CodexPool({ ...common, initialAccount: a }).acquire('chat')).provider, a);
   await assert.rejects(new CodexPool(common).acquire('chat'), { code: 'POOL_UNAVAILABLE' });
@@ -49,23 +61,78 @@ test('cancelled authentication is not replaced by stale auth', async () => {
   await assert.rejects(pool.acquire('chat', '', c.signal), { name: 'AbortError' });
 });
 
-test('shared store reads freshest same-account alias and atomically refreshes mirrors only', async () => {
-  const m = memory({ [a]: credential('id-a', 10), [b]: credential('id-b', 10), 'openai-codex': credential('id-a', 20, 'new'), anthropic: { type: 'api_key', key: 'fixture-other' } });
-  const store = new PiAccountStore(m.backend, a, [a, b]);
-  assert.equal((await store.read('openai-codex'))?.type, 'oauth');
-  assert.equal((await store.read('openai-codex') as { access: string }).access, 'new');
+test('DSH store reads and refreshes only its own codex-pool record', async () => {
+  const m = memory({ 'codex-pool/pepabo': grant(credential('id-a', 10)), 'codex-pool/yukimi': grant(credential('id-b', 10)), 'llm-pi-ai/openai-codex': grant(credential('id-c', 10)) });
+  const store = new DshAccountStore(() => m.provider, a);
+  assert.equal((await store.read('openai-codex') as unknown as { accountId: string }).accountId, 'id-a');
+  assert.equal(await store.read('anthropic'), undefined);
   await store.modify('openai-codex', async () => credential('id-a', 30, 'refreshed'));
-  assert.equal(m.state()[a].access, 'refreshed'); assert.equal(m.state()['openai-codex'].access, 'refreshed'); assert.equal(m.state()[b].accountId, 'id-b'); assert.equal(m.state().anthropic.key, 'fixture-other');
-  await assert.rejects(store.modify('openai-codex', async () => credential('id-b', 100)), { code: 'ACCOUNT_CHANGED' });
-  await assert.rejects(store.delete(), { code: 'MANAGE_IN_PI' });
+  assert.equal(stored(m, 'codex-pool/pepabo').access, 'refreshed');
+  assert.equal(stored(m, 'codex-pool/yukimi').accountId, 'id-b');
+  assert.equal(stored(m, 'llm-pi-ai/openai-codex').accountId, 'id-c', "DSH's own provider login is untouched");
+  await assert.rejects(store.modify('openai-codex', async () => ({ type: 'oauth', access: '', refresh: '', expires: 1 }) as Credential), { code: 'INVALID_REFRESH' });
+  await store.delete('openai-codex');
+  assert.equal(m.records.has('codex-pool/pepabo'), false);
+  await assert.rejects(new DshAccountStore(() => undefined, a).modify('openai-codex', async () => credential('id-a', 1)), { code: 'NO_CREDENTIAL_STORE' });
 });
 
 test('parallel refreshes serialize and never double-refresh a rotated account', async () => {
-  const m = memory({ [a]: credential('id-a', 10), 'openai-codex': credential('id-b', 10), [b]: credential('id-b', 10) });
-  const stores = [new PiAccountStore(m.backend, a, [a, b]), new PiAccountStore(m.backend, a, [a, b])];
+  const m = memory({ 'codex-pool/pepabo': grant(credential('id-a', 10)) });
+  const stores = [new DshAccountStore(() => m.provider, a), new DshAccountStore(() => m.provider, a)];
   let count = 0;
   await Promise.all(stores.map(store => store.modify('openai-codex', async current => {
     if (current?.type === 'oauth' && current.expires < 100) { count++; return credential('id-a', 100); } return current;
   })));
-  assert.equal(count, 1); assert.equal(m.state()['openai-codex'].accountId, 'id-b');
+  assert.equal(count, 1);
+});
+
+test('one DSH sign-in flow per account commits the login and refuses a duplicate ChatGPT account', async () => {
+  let next = credential('id-a', 100);
+  const oauth = { ...builtinModels().getProvider('openai-codex')!.auth.oauth!, login: async (interaction: { notify(e: unknown): void }) => {
+    interaction.notify({ type: 'device_code', userCode: 'ABCD-1234', verificationUri: 'https://auth.openai.com/codex/device' });
+    return next;
+  } } as unknown as OAuthAuth;
+  const ctx = new Context();
+  const m = memory();
+  ctx.provide('credentials', m.provider);
+  const flows = new Map<string, { label: string; run(session: unknown): Promise<void> }>();
+  ctx.provide('authorization', { registerFlow: (flow: { key: string; label: string; run(session: unknown): Promise<void> }) => { flows.set(flow.key, flow); return () => { flows.delete(flow.key); }; } });
+  const dispose = registerLoginFlows(ctx, [a, b], oauth);
+  assert.deepEqual([...flows.keys()], ['codex-pool/pepabo', 'codex-pool/yukimi']);
+  const notices: unknown[] = [];
+  let target = 'codex-pool/pepabo';
+  const session = { method: 'oauth', signal: new AbortController().signal, notify: (n: unknown) => notices.push(n), prompt: async () => '',
+    commit: async (record: CredentialRecord) => { await m.provider.modifyRecord(target as never, async () => record); } };
+  await flows.get('codex-pool/pepabo')!.run(session);
+  assert.equal(stored(m, 'codex-pool/pepabo').accountId, 'id-a');
+  assert.deepEqual(notices[0], { message: 'Enter this code on the verification page to finish signing in.', url: 'https://auth.openai.com/codex/device', code: 'ABCD-1234' });
+  await assert.rejects(flows.get('codex-pool/yukimi')!.run(session), { code: 'DUPLICATE_ACCOUNT' });
+  assert.equal(m.records.has('codex-pool/yukimi'), false);
+  next = credential('id-b', 100);
+  target = 'codex-pool/yukimi';
+  await flows.get('codex-pool/yukimi')!.run(session);
+  assert.equal(stored(m, 'codex-pool/yukimi').accountId, 'id-b');
+  dispose();
+  assert.equal(flows.size, 0);
+});
+
+test('/codex-login answers the method question with device code and returns the code to show', async () => {
+  const { startDeviceLogin } = await import('../src/auth/login.ts');
+  const ctx = new Context();
+  const settle: { resolve?: (o: { status: 'authorized' }) => void } = {};
+  let asked: string | undefined;
+  ctx.provide('authorization', { begin: async (request: { key: string; interaction: { notify(n: unknown): void; prompt(p: unknown): Promise<string> } }) => {
+    asked = await request.interaction.prompt({ kind: 'select', message: 'method', options: [{ id: 'browser', label: 'b' }, { id: 'device_code', label: 'd' }] });
+    request.interaction.notify({ message: 'Enter this code', url: 'https://auth.openai.com/codex/device', code: 'WXYZ-9876' });
+    return new Promise(resolve => { settle.resolve = resolve; });
+  } });
+  const reports: string[] = [];
+  const result = await startDeviceLogin(ctx, [a, b], a, message => reports.push(message));
+  assert.equal(asked, 'device_code');
+  assert.equal(result.kind, 'success');
+  assert.match(result.text ?? '', /^https:\/\/auth\.openai\.com\/codex\/device code WXYZ-9876 .*"pepabo"/);
+  settle.resolve!({ status: 'authorized' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(reports, ['Codex account "pepabo" sign-in authorized.']);
+  assert.equal((await startDeviceLogin(ctx, [a, b], 'other', () => {})).kind, 'error');
 });

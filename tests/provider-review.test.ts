@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 import { Context } from '@deepseek-ai/cordis';
 import { createUserMessage, createSystemMessage, LlmRuntime } from '@deepseek-ai/dsh-llm';
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm';
-import type { PayloadTransform } from 'dsh-pi-compat/payload';
+import type { PayloadTransform } from 'dsh-codex/payload';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { zstdDecompressSync } from 'node:zlib';
-import { PiCompatService } from '../src/service.ts';
+import { CodexPoolService } from '../src/service.ts';
 import { CompactionId, compactCheckpointSource } from '@deepseek-ai/dsh-compaction';
 import { openAICodexResponsesApi } from '@earendil-works/pi-ai/api/openai-codex-responses.lazy';
 import type { Agent } from '@deepseek-ai/dsh-agent';
@@ -18,11 +18,12 @@ import { CodexPool } from '../src/auth/pool.ts';
 import { PooledCodexAdapter } from '../src/provider.ts';
 import { ServiceTierSettingsHelper } from '../src/tier/index.ts';
 import { encodeCheckpoint, restoreCheckpointPayload } from '../src/compact/checkpoint.ts';
-import { PiAccountStore, type LockedBackend } from '../src/auth/pi-store.ts';
+import { DshAccountStore } from '../src/auth/store.ts';
+import type { CredentialProvider, CredentialRecord } from '@deepseek-ai/dsh-credentials';
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';
 import { createProvider } from '@earendil-works/pi-ai';
 
-// All credentials are invented. Never call AuthBroker.create or openPiBackend here.
+// All credentials are invented. Never call AuthBroker.create against a real store here.
 function fixture() {
   let auth = 0;
   const pool = new CodexPool({ members: ['openai-codex-1'],
@@ -240,18 +241,21 @@ test('provider review: context capacity is async-local, nested, capped, and does
 
 // Exercise pi-ai's real double-checked refresh API with a fully synthetic provider.
 // This catches cancellation loss that direct store.modify-only tests cannot catch.
-test('provider review: real pi-ai shared locked refresh persists rotated token after caller cancellation', async () => {
-  const member = 'openai-codex-1';
+test('provider review: real pi-ai locked refresh persists rotated token after caller cancellation', async () => {
+  const member = 'synthetic';
   const cred = (access: string, expires: number) => ({ type: 'oauth' as const, access, refresh: `refresh-${access}`, expires, accountId: 'synthetic-account' });
-  let state = JSON.stringify({ [member]: cred('old', 1), 'openai-codex': cred('old', 1) });
+  const records = new Map<string, CredentialRecord>([[`codex-pool/${member}`, { kind: 'grant', payload: cred('old', 1) }]]);
   let queue = Promise.resolve();
-  const backend: LockedBackend = { async withLockAsync(fn, options) {
-    const prior = queue; let release!: () => void; queue = new Promise<void>(resolve => { release = resolve; });
-    await prior;
-    try { options?.signal?.throwIfAborted(); const value = await fn(state); options?.signal?.throwIfAborted(); if (value.next !== undefined) state = value.next; return value.result; }
-    finally { release(); }
-  } };
-  const store = new PiAccountStore(backend, member, [member]);
+  const credentials = {
+    async readRecord(key: string) { return records.get(key); },
+    async modifyRecord(key: string, mutate: (current: CredentialRecord | undefined) => Promise<CredentialRecord | undefined>) {
+      const prior = queue; let release!: () => void; queue = new Promise<void>(resolve => { release = resolve; });
+      await prior;
+      try { const next = await mutate(records.get(key)); if (next) records.set(key, next); return records.get(key); }
+      finally { release(); }
+    },
+  } as unknown as CredentialProvider;
+  const store = new DshAccountStore(() => credentials, member);
   let started!: () => void, finish!: () => void;
   const startedPromise = new Promise<void>(resolve => { started = resolve; });
   const finishPromise = new Promise<void>(resolve => { finish = resolve; });
@@ -272,9 +276,8 @@ test('provider review: real pi-ai shared locked refresh persists rotated token a
   finish();
   assert.equal((await second)?.auth.apiKey, 'rotated');
   assert.equal(refreshes, 1);
-  const result = JSON.parse(state);
-  assert.equal(result[member].refresh, 'refresh-rotated');
-  assert.equal(result['openai-codex'].refresh, 'refresh-rotated');
+  const stored = records.get(`codex-pool/${member}`) as { payload: { refresh: string } };
+  assert.equal(stored.payload.refresh, 'refresh-rotated');
 });
 
 test('provider review: current Cordis service init registers actual DSH adapter and unload removes route/settings', async t => {
@@ -290,45 +293,49 @@ test('provider review: current Cordis service init registers actual DSH adapter 
     return () => { commands.delete(definition.name); };
   } });
   ctx.provide('agents', { list: () => [] });
+  const flows = new Set<string>();
+  ctx.provide('authorization', { registerFlow: (flow: { key: string }) => { flows.add(flow.key); return () => { flows.delete(flow.key); }; } });
   const llmFiber = await ctx.plugin(LlmRuntime);
-  const serviceFiber = await ctx.plugin(PiCompatService, {
-    authPath: join(directory, 'never-open-auth.json'), poolConfigPath: join(directory, 'never-open-pool.json'),
-    settingsDirectory: join(directory, 'settings'), piTierConfigPath: join(directory, 'missing-tier.json'),
+  const serviceFiber = await ctx.plugin(CodexPoolService, {
+    accounts: ['alpha', 'beta'],
+    settingsDirectory: join(directory, 'settings'), tierConfigPath: join(directory, 'missing-tier.json'),
   });
   t.after(async () => { await serviceFiber.dispose(); await llmFiber.dispose(); });
   assert.equal(creates, 1);
-  assert.ok(ctx.piCompat.adapter instanceof PooledCodexAdapter);
-  assert.ok(ctx.piCompat.settings);
+  assert.ok(ctx.codexPool.adapter instanceof PooledCodexAdapter);
+  assert.ok(ctx.codexPool.settings);
   assert.equal((await ctx.llm.resolveModelInfo('openai-codex', f.model.id)).id, f.model.id);
-  assert.deepEqual([...commands].sort(), ['codex-pool', 'context-window', 'fast', 'service-tier']);
+  assert.deepEqual([...commands].sort(), ['codex-login', 'codex-pool', 'context-window', 'fast', 'service-tier']);
+  assert.deepEqual([...flows].sort(), ['codex-pool/alpha', 'codex-pool/beta'], 'one DSH sign-in flow per pool account');
   const selection = { current: { provider: 'foreign', model: 'new-model' }, assembled: undefined };
   const disposeSelection = installModelSelection(ctx, selection);
   const agent = { ...f.agent, session: { ...f.agent.session, deriveMessages: () => [] } } as unknown as Agent;
   const assembly = { sections: [], contexts: [], tools: [], variables: { provider: 'openai-codex', model: f.model.id } };
   await ctx.waterfall('system-prompt/assemble', assembly, { agent }, () => Promise.resolve(assembly));
-  assert.deepEqual(ctx.piCompat.routeFor(agent), { provider: 'foreign', model: 'new-model' }, 'pre-step observes final UI selection, not stale request header');
+  assert.deepEqual(ctx.codexPool.routeFor(agent), { provider: 'foreign', model: 'new-model' }, 'pre-step observes final UI selection, not stale request header');
   disposeSelection();
   await serviceFiber.dispose();
   assert.deepEqual([...commands], []);
+  assert.deepEqual([...flows], []);
   await assert.rejects(ctx.llm.resolveModelInfo('openai-codex', f.model.id), { code: 'NO_ADAPTER' });
   assert.equal(f.authCount(), 0);
 });
 
-test('provider review: service starts without a Pi login and the first Codex request reports it', async t => {
+test('provider review: service starts with no signed-in account and the first Codex request reports it', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'dsh-provider-review-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const ctx = new Context();
   ctx.provide('commands', { register: () => () => {} });
   ctx.provide('agents', { list: () => [] });
+  ctx.provide('authorization', { registerFlow: () => () => {} });
   const llmFiber = await ctx.plugin(LlmRuntime);
-  const serviceFiber = await ctx.plugin(PiCompatService, {
-    authPath: join(directory, 'missing-auth.json'), poolConfigPath: join(directory, 'missing-pool.json'),
-    settingsDirectory: join(directory, 'settings'), piTierConfigPath: join(directory, 'missing-tier.json'),
+  const serviceFiber = await ctx.plugin(CodexPoolService, {
+    settingsDirectory: join(directory, 'settings'), tierConfigPath: join(directory, 'missing-tier.json'),
   });
   t.after(async () => { await serviceFiber.dispose(); await llmFiber.dispose(); });
-  assert.ok(ctx.piCompat.adapter instanceof PooledCodexAdapter);
-  assert.equal(ctx.piCompat.broker.status().opened, false);
-  await assert.rejects(ctx.piCompat.broker.acquire('chat'), { code: 'NO_POOL_CONFIG' });
-  // A later login is picked up: the failed open is not cached.
-  await assert.rejects(ctx.piCompat.broker.acquire('chat'), { code: 'NO_POOL_CONFIG' });
+  assert.ok(ctx.codexPool.adapter instanceof PooledCodexAdapter);
+  assert.equal(ctx.codexPool.broker.status().opened, false);
+  await assert.rejects(ctx.codexPool.broker.acquire('chat'), { code: 'POOL_UNAVAILABLE' });
+  // A later sign-in is picked up: every request reads the stored logins again.
+  await assert.rejects(ctx.codexPool.broker.acquire('chat'), { code: 'POOL_UNAVAILABLE' });
 });

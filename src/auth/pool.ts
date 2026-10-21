@@ -1,4 +1,4 @@
-/** Request-local Codex account selection, matching the user's Pi auth-use policy. */
+/** Request-local Codex account selection at every authenticated use. */
 export interface Quota {
   provider: string;
   kind: 'ready' | 'watch' | 'low' | 'blocked' | 'error' | 'missing-auth';
@@ -35,7 +35,7 @@ export class PoolError extends Error {
   constructor(public readonly code: string, message: string) { super(message); this.name = 'PoolError'; }
 }
 
-/** Interpret WHAM quota windows exactly as the Pi selector's conservative minimum. */
+/** Interpret WHAM quota windows as their conservative minimum. */
 export function quotaFromUsage(provider: string, body: unknown): Quota {
   const value = body as { rate_limit?: { allowed?: boolean; limit_reached?: boolean; primary_window?: unknown; secondary_window?: unknown } };
   const rate = value?.rate_limit;
@@ -48,7 +48,7 @@ export function quotaFromUsage(provider: string, body: unknown): Quota {
     weeklyResetAt: typeof weekly?.reset_at === 'number' && Number.isFinite(weekly.reset_at) ? weekly.reset_at : undefined };
 }
 
-/** Built-in equivalent of ~/.pi/agent/selectors/weekly-reset.mjs, for portable tests. */
+/** Default policy: at least 20% left, nearest future weekly reset first, then most remaining. */
 export const weeklyResetSelector: Selector = async ({ members, getQuota, timestamp }) => {
   const candidates = await Promise.all(members.map(async provider => {
     const quota = await getQuota(provider);
@@ -68,7 +68,7 @@ export class CodexPool {
   private cooldowns = new Map<string, number>();
   private now: () => number;
   constructor(private readonly options: PoolOptions) {
-    if (!options.members.length || new Set(options.members).size !== options.members.length || options.members.some(m => !/^openai-codex-\d+$/.test(m))) throw new PoolError('INVALID_POOL', 'Pool must contain distinct numbered Codex subscriptions.');
+    if (!options.members.length || new Set(options.members).size !== options.members.length || options.members.some(m => !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(m))) throw new PoolError('INVALID_POOL', 'Pool must list distinct lowercase hyphenated account names.');
     this.selected = options.members.includes(options.initialAccount ?? '') ? options.initialAccount : undefined;
     this.now = options.now ?? Date.now;
   }
@@ -93,7 +93,7 @@ export class CodexPool {
       const selected = await this.options.selector({ members: [...members], timestamp: this.now(), reason: 'auth-use', modelId, getQuota: p => members.includes(p) ? this.quota(p, signal) : Promise.resolve(undefined) });
       signal?.throwIfAborted();
       if (selected !== undefined && !members.includes(selected)) throw new PoolError('INVALID_SELECTION', 'Selector returned an account outside the active pool.');
-      // Pi auth-use preserves the current selection when the script returns undefined.
+      // An undefined selection keeps the current account.
       const provider = selected ?? (this.selected && members.includes(this.selected) ? this.selected : undefined);
       if (!provider) throw new PoolError('POOL_UNAVAILABLE', 'No eligible Codex account. Check authentication, quota and cooldowns.');
       const auth = await this.options.resolveAuth(provider, signal);

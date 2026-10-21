@@ -13,9 +13,9 @@ import {
   type ServiceTierModel, type TierSessionState,
 } from './tier/index.ts';
 
-export const piServiceTierPath = () => join(process.env.PI_CODING_AGENT_DIR || join(homedir(), '.pi', 'agent'), 'service-tier.json');
-/** Read only the dedicated, non-auth Pi file. Invalid data fails closed, never writes. */
-export async function readPiTierDefaults(path = piServiceTierPath()) {
+export const defaultTierPath = () => join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'codex-pool', 'service-tier.json');
+/** Read only the dedicated service-tier defaults file. Invalid data fails closed, never writes. */
+export async function readTierDefaults(path = defaultTierPath()) {
   try { return parseTierSettings(JSON.parse(await readFile(path, 'utf8'))); }
   catch (error) { if (isMissing(error)) return {}; throw new Error(`Invalid service-tier configuration: ${path}`, { cause: error }); }
 }
@@ -23,9 +23,9 @@ function isMissing(error: unknown): boolean { return isRecord(error) && error.co
 interface StoredSettings { version: 1; sessionId: string; tier: TierSessionState; contextWindow: number | null }
 export interface SessionLineage { parentSession?: string }
 export interface SettingsOptions {
-  /** Dedicated plugin directory, NOT a DSH/Pi config or session log. */
+  /** Dedicated plugin directory, NOT a DSH config or session log. */
   directory: string;
-  piConfigPath?: string;
+  tierConfigPath?: string;
   /** Deployment-supported request hooks; omit for the standalone all-provider helper. */
   activeProviders?: readonly string[];
   /** Required for /fast and implicit-provider /service-tier; resolve the actual API too. */
@@ -186,7 +186,7 @@ export type SettingsContext = Pick<Context, 'on'> & { commands: Pick<Context['co
 export type SettingsCleanup = (() => Promise<void>) & { configuration: SettingsConfiguration };
 /** Install before agents start; await completion. Cleanup unregisters and drains owned work. */
 export async function registerSettings(ctx: SettingsContext, tiers: ServiceTierSettingsHelper, options: SettingsOptions): Promise<SettingsCleanup> {
-  tiers.setDefaults(await readPiTierDefaults(options.piConfigPath));
+  tiers.setDefaults(await readTierDefaults(options.tierConfigPath));
   const configuration = new SettingsConfiguration(tiers, options);
   const disposers: (() => void)[] = [];
   const active = new Set<Promise<unknown>>();

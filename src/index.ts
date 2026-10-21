@@ -1,1 +1,1 @@
-export { default, PiCompatService, type Config } from './service.ts';
+export { default, CodexPoolService, type Config } from './service.ts';

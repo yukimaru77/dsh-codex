@@ -18,8 +18,8 @@ try {
   await copyFile(join(source, 'package.json'), join(profile, 'package.json'));
   const manifest = JSON.parse(await readFile(join(profile, 'package.json'), 'utf8'));
   manifest.dependencies ??= {};
-  manifest.dependencies['dsh-pi-compat'] = `link:${root}`;
-  if (!manifest.dsh.profile.bundles.includes('dsh-pi-compat')) manifest.dsh.profile.bundles.push('dsh-pi-compat');
+  manifest.dependencies['dsh-codex'] = `link:${root}`;
+  if (!manifest.dsh.profile.bundles.includes('dsh-codex')) manifest.dsh.profile.bundles.push('dsh-codex');
   await writeFile(join(profile, 'package.json'), JSON.stringify(manifest, null, 2));
   // Model and provider preservation are exercised with an offline fixture, never
   // by copying a user's endpoints, credentials, or selected default model.
@@ -27,14 +27,14 @@ try {
   await writeFile(join(profile, 'cordis.patch.yml'), fixtureProfile + webCompatibilityPatch(fixtureProfile));
   await cp(join(source, 'node_modules'), join(profile, 'node_modules'), { recursive: true, dereference: false, verbatimSymlinks: true }).catch(e => { if (e.code !== 'ENOENT') throw e; });
   await mkdir(join(profile, 'node_modules'), { recursive: true });
-  await rm(join(profile, 'node_modules/dsh-pi-compat'), { recursive: true, force: true });
-  await symlink(root, join(profile, 'node_modules/dsh-pi-compat'), 'junction');
+  await rm(join(profile, 'node_modules/dsh-codex'), { recursive: true, force: true });
+  await symlink(root, join(profile, 'node_modules/dsh-codex'), 'junction');
   const env = { ...process.env, HOME: scratch, DSH_HOME: home, DSH_TELEMETRY: '0', DSH_SMOKE_FIXTURE_KEY: 'synthetic-fixture-not-a-real-key' };
   const credential = { type: 'oauth', access: 'x.' + Buffer.from(JSON.stringify({ 'https://api.openai.com/auth': { chatgpt_account_id: 'fixture-only' } })).toString('base64url') + '.x', refresh: 'fixture-not-real', expires: Date.now() + 3600000, accountId: 'fixture-only' };
   await writeFile(join(scratch, 'auth.json'), JSON.stringify({ 'openai-codex': credential, 'openai-codex-2': credential }), { mode: 0o600 });
   await writeFile(join(scratch, 'pool.json'), JSON.stringify({ standardLogin: true, pools: [{ name: 'fixture', enabled: true, baseProvider: 'openai-codex', members: ['openai-codex-2'], strategy: 'custom', selectionTiming: 'auth-use' }] }));
   await writeFile(join(scratch, 'no-network.mjs'), "globalThis.fetch = async () => { throw new Error('External requests forbidden during Web smoke'); };\n");
-  await writeFile(join(scratch, 'smoke.patch.yml'), `- id: hmr\n  disabled: true\n- id: webserver\n  config:\n    host: 127.0.0.1\n    port: 0\n- id: web-runtime\n  config:\n    openBrowser: false\n    printUrl: false\n    surfaceContext: false\n- id: pi-compatible\n  config:\n    authPath: ${JSON.stringify(join(scratch, 'auth.json'))}\n    poolConfigPath: ${JSON.stringify(join(scratch, 'pool.json'))}\n    piTierConfigPath: ${JSON.stringify(join(scratch, 'no-tier.json'))}\n    settingsDirectory: ${JSON.stringify(join(scratch, 'settings'))}\n- insert:\n    - id: pi-compat-web-probe\n      name: ${JSON.stringify(join(root, 'scripts/smoke-web-probe.mjs'))}\n`);
+  await writeFile(join(scratch, 'smoke.patch.yml'), `- id: hmr\n  disabled: true\n- id: webserver\n  config:\n    host: 127.0.0.1\n    port: 0\n- id: web-runtime\n  config:\n    openBrowser: false\n    printUrl: false\n    surfaceContext: false\n- id: codex-pool\n  config:\n    accounts: [smoke]\n    tierConfigPath: ${JSON.stringify(join(scratch, 'no-tier.json'))}\n    settingsDirectory: ${JSON.stringify(join(scratch, 'settings'))}\n- insert:\n    - id: codex-web-probe\n      name: ${JSON.stringify(join(root, 'scripts/smoke-web-probe.mjs'))}\n`);
   const args = [cli, '--profile', 'web', '--patch', join(scratch, 'smoke.patch.yml'), '--no-open'];
   const bootEnv = { ...env, NODE_OPTIONS: `--import=${join(scratch, 'no-network.mjs')}`, DSH_WEB_SMOKE_CONTROL: join(scratch, 'control.json') };
   if (keep) {
@@ -56,6 +56,6 @@ try {
     const result = spawnSync(process.execPath, args, { cwd: scratch, env: bootEnv, encoding: 'utf8', timeout: 25000, maxBuffer: 1024 * 1024, killSignal: 'SIGKILL' });
     process.stdout.write(result.stdout ?? ''); process.stderr.write(result.stderr ?? '');
     if (result.error) console.error(result.error.message);
-    if (result.status !== 0 || !result.stdout.includes('PI_COMPAT_WEB_SMOKE_OK')) process.exitCode = 1;
+    if (result.status !== 0 || !result.stdout.includes('CODEX_WEB_SMOKE_OK')) process.exitCode = 1;
   }
 } finally { if (!kept) await rm(scratch, { recursive: true, force: true }); }

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import type { CommandDefinition, CommandInvocation } from '@deepseek-ai/dsh-commands';
-import { registerSettings, readPiTierDefaults, type SettingsContext } from '../src/settings.ts';
+import { registerSettings, readTierDefaults, type SettingsContext } from '../src/settings.ts';
 import { ServiceTierSettingsHelper, effectiveContextCapacity } from '../src/tier/index.ts';
 
 const model = { provider: 'openai-codex', api: 'openai-codex-responses', id: 'mock' };
@@ -13,8 +13,8 @@ const agent = (id: string, parentSession?: string) => ({ session: { id, header: 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'dsh-settings-test-'));
   const directory = join(root, 'sessions');
-  const piConfigPath = join(root, 'service-tier.json');
-  await writeFile(piConfigPath, JSON.stringify({ 'openai-codex': 'priority' }));
+  const tierConfigPath = join(root, 'service-tier.json');
+  await writeFile(tierConfigPath, JSON.stringify({ 'openai-codex': 'priority' }));
   const commands = new Map<string, CommandDefinition>();
   let created: ((payload: { agent: Agent }) => Promise<unknown>) | undefined;
   const ctx = {
@@ -23,7 +23,7 @@ async function fixture() {
     on: (_name: string, handler: typeof created) => { created = handler; return () => { created = undefined; }; },
   } as unknown as SettingsContext;
   const tiers = new ServiceTierSettingsHelper();
-  const options = { directory, piConfigPath, modelFor: () => model };
+  const options = { directory, tierConfigPath, modelFor: () => model };
   const cleanup = await registerSettings(ctx, tiers, options);
   async function run(name: string, rawInput = '', receivingAgent = agent('one')) {
     return commands.get(name)!.handler({ agent: receivingAgent, rawInput, signal: new AbortController().signal, attachments: [] } as unknown as CommandInvocation);
@@ -39,14 +39,14 @@ test('real command definition shape, defaults, fast toggle and explicit off surv
     assert.equal(f.tiers.effective()['openai-codex'], 'priority');
     assert.equal((await f.run('fast')).kind, 'success');
     assert.equal(f.tiers.effective('one')['openai-codex'], '');
-    const resumedTiers = new ServiceTierSettingsHelper(await readPiTierDefaults(f.options.piConfigPath));
+    const resumedTiers = new ServiceTierSettingsHelper(await readTierDefaults(f.options.tierConfigPath));
     const { SettingsConfiguration } = await import('../src/settings.ts');
     const resumed = new SettingsConfiguration(resumedTiers, f.options);
     assert.deepEqual(await resumed.requestHook('one')({}, model), {});
     assert.equal(resumedTiers.effective('one')['openai-codex'], '');
     await f.run('fast', 'inherit');
     assert.equal(f.tiers.effective('one')['openai-codex'], 'priority');
-    assert.equal(await readFile(f.options.piConfigPath, 'utf8'), '{"openai-codex":"priority"}');
+    assert.equal(await readFile(f.options.tierConfigPath, 'utf8'), '{"openai-codex":"priority"}');
   } finally { await f.dispose(); }
 });
 
@@ -107,11 +107,11 @@ test('bad Pi data fails closed, missing config means upstream empty defaults', a
   const root = await mkdtemp(join(tmpdir(), 'dsh-settings-test-'));
   try {
     const path = join(root, 'service-tier.json');
-    assert.deepEqual(await readPiTierDefaults(path), {});
+    assert.deepEqual(await readTierDefaults(path), {});
     await writeFile(path, '{"unknown":"priority"}');
-    await assert.rejects(readPiTierDefaults(path), /Invalid service-tier configuration/);
+    await assert.rejects(readTierDefaults(path), /Invalid service-tier configuration/);
     await writeFile(path, '{"openai-codex":""}');
-    await assert.rejects(readPiTierDefaults(path));
+    await assert.rejects(readTierDefaults(path));
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -121,7 +121,7 @@ test('cold request lineage inherits before agent creation; cycles refuse safely'
     await f.run('service-tier', 'flex');
     await f.run('context-window', '987');
     const { SettingsConfiguration } = await import('../src/settings.ts');
-    const tiers = new ServiceTierSettingsHelper(await readPiTierDefaults(f.options.piConfigPath));
+    const tiers = new ServiceTierSettingsHelper(await readTierDefaults(f.options.tierConfigPath));
     const cold = new SettingsConfiguration(tiers, {
       ...f.options,
       lineageFor: id => id === 'cold' ? { parentSession: 'one' } : undefined,

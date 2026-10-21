@@ -9,31 +9,32 @@ import { checkpointTexts } from './compact/checkpoint.ts';
 import type { Agent } from '@deepseek-ai/dsh-agent';
 import type { LlmCallConfig } from '@deepseek-ai/dsh-llm';
 import type {} from '@deepseek-ai/dsh-commands';
+import type {} from '@deepseek-ai/dsh-authorization';
+import { registerLoginFlows, startDeviceLogin } from './auth/login.ts';
+import { DshAccountStore } from './auth/store.ts';
 import { registerSettings, type SettingsConfiguration } from './settings.ts';
 
-declare module '@deepseek-ai/cordis' { interface Context { piCompat: PiCompatService } }
+declare module '@deepseek-ai/cordis' { interface Context { codexPool: CodexPoolService } }
 export interface Config {
-  authPath?: string;
-  poolConfigPath?: string;
-  poolName?: string;
+  accounts?: string[];
+  selectorScript?: string;
   contextWindow?: number;
   reasoning?: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   nativeCompaction?: boolean;
   settingsDirectory?: string;
-  piTierConfigPath?: string;
+  tierConfigPath?: string;
 }
-/** One owner of the shared auth broker; no Pi agent loop or second credential store. */
-export class PiCompatService extends Service<Config> {
-  static inject = ['llm', 'commands', 'agents'];
+/** One owner of the Codex account pool; logins live in the DSH credential store. */
+export class CodexPoolService extends Service<Config> {
+  static inject = ['llm', 'commands', 'agents', 'authorization'];
   static Config: z<Config> = z.object({
-    authPath: z.string().default(join(homedir(), '.pi/agent/auth.json')),
-    poolConfigPath: z.string().default(join(homedir(), '.pi/agent/multi-pass.json')),
-    poolName: z.string(),
+    accounts: z.array(z.string()).default(['codex-1', 'codex-2', 'codex-3']),
+    selectorScript: z.string(),
     contextWindow: z.number().min(1),
     reasoning: z.union(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']).default('medium'),
     nativeCompaction: z.boolean().default(true),
     settingsDirectory: z.string(),
-    piTierConfigPath: z.string(),
+    tierConfigPath: z.string(),
   }) as z<Config>;
   broker!: AuthBroker;
   adapter!: PooledCodexAdapter;
@@ -43,20 +44,19 @@ export class PiCompatService extends Service<Config> {
   routeFor(agent: Agent): Partial<LlmCallConfig> {
     return this.assembledRoutes.get(agent) ?? agent.session.requestHeader()?.config ?? agent.options;
   }
-  constructor(ctx: Context, private readonly options: Config) { super(ctx, 'piCompat'); }
+  constructor(ctx: Context, private readonly options: Config) { super(ctx, 'codexPool'); }
   async [Service.init]() {
-    this.broker = AuthBroker.deferred({
-      authPath: this.options.authPath ?? join(homedir(), '.pi/agent/auth.json'),
-      poolConfigPath: this.options.poolConfigPath ?? join(homedir(), '.pi/agent/multi-pass.json'),
-      poolName: this.options.poolName,
-    });
+    const accounts = this.options.accounts ?? ['codex-1', 'codex-2', 'codex-3'];
+    this.broker = AuthBroker.deferred({ accounts, credentials: () => this.ctx.get('credentials'), selectorScript: this.options.selectorScript });
+    const disposeLogins = registerLoginFlows(this.ctx, accounts);
+    this.ctx.effect(() => disposeLogins);
     this.adapter = new PooledCodexAdapter(this.ctx, this.broker, this.tiers, { ...this.options,
       capacityFor: id => this.settings.capacityFor(id), beforeRequest: id => this.settings.ensureLoaded(id),
       routeFor: agent => this.routeFor(agent),
     });
     const cleanup = await registerSettings(this.ctx, this.tiers, {
-      directory: this.options.settingsDirectory ?? join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'pi-compat', 'session-settings'),
-      piConfigPath: this.options.piTierConfigPath,
+      directory: this.options.settingsDirectory ?? join(dshHome(), 'codex-pool', 'session-settings'),
+      tierConfigPath: this.options.tierConfigPath ?? join(dshHome(), 'codex-pool', 'service-tier.json'),
       activeProviders: ['openai-codex'],
       modelFor: agent => {
         const route = agent.session.requestHeader()?.config ?? agent.options;
@@ -68,8 +68,15 @@ export class PiCompatService extends Service<Config> {
     this.ctx.effect(() => cleanup);
     // A conflicting existing route fails explicitly; never steal a live registration.
     this.ctx.llm.registerAdapter(['openai-codex'], this.adapter);
-    this.ctx.effect(() => this.ctx.commands.register({ name: 'codex-pool', description: 'Shared Pi Codex pool status (cached; no network request)',
-      handler: () => ({ kind: 'success', text: JSON.stringify({ ...this.broker.status(), nativeCompaction: this.nativeCompaction, authentication: 'Managed by Pi; no separate DSH login' }, null, 2) }),
+    this.ctx.effect(() => this.ctx.commands.register({ name: 'codex-pool', description: 'Codex account pool status (cached quota; no network request)',
+      handler: async () => {
+        const signedIn = await Promise.all(accounts.map(async account => [account, (await new DshAccountStore(() => this.ctx.get('credentials'), account).read('openai-codex')) !== undefined] as const));
+        return { kind: 'success', text: JSON.stringify({ ...this.broker.status(), signedIn: Object.fromEntries(signedIn), nativeCompaction: this.nativeCompaction, signIn: '/codex-login <account>' }, null, 2) };
+      },
+    }));
+    this.ctx.effect(() => this.ctx.commands.register({ name: 'codex-login', description: 'Sign a Codex pool account in with a ChatGPT device code',
+      input: { hint: `<${accounts.join('|')}>` },
+      handler: invocation => startDeviceLogin(this.ctx, accounts, invocation.rawInput.trim(), message => this.ctx.logger.info(message)),
     }));
     this.ctx.on('system-prompt/assemble', async (_assembly, { agent }, next) => {
       const assembled = await next();
@@ -98,4 +105,5 @@ export class PiCompatService extends Service<Config> {
   }
   get nativeCompaction() { return this.options.nativeCompaction !== false; }
 }
-export default PiCompatService;
+export default CodexPoolService;
+function dshHome(): string { return process.env.DSH_HOME || join(homedir(), '.dsh'); }

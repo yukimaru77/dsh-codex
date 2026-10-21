@@ -10,8 +10,8 @@ import { abortable } from './compact/portable-core.ts';
 import type {} from './service.ts';
 
 /** Preset-scoped replacement for compaction-basic; inherits all normal DSH policies. */
-export default class PiCompatCompaction extends BasicCompactionEngine {
-  static inject = [...BasicCompactionEngine.inject, 'piCompat'];
+export default class CodexCompaction extends BasicCompactionEngine {
+  static inject = [...BasicCompactionEngine.inject, 'codexPool'];
   private readonly converting = new AsyncLocalStorage<string>();
   constructor(ctx: Context, config?: ConstructorParameters<typeof BasicCompactionEngine>[1]) {
     super(ctx, config);
@@ -33,13 +33,13 @@ export default class PiCompatCompaction extends BasicCompactionEngine {
     }, { prepend: true });
   }
   override async compactIfNeeded(...args: Parameters<BasicCompactionEngine['compactIfNeeded']>) {
-    const cap = await this.ctx.piCompat.settings.capacityFor(String(args[0].session.id));
-    return this.ctx.piCompat.adapter.withContextCapacity(cap, () => super.compactIfNeeded(...args));
+    const cap = await this.ctx.codexPool.settings.capacityFor(String(args[0].session.id));
+    return this.ctx.codexPool.adapter.withContextCapacity(cap, () => super.compactIfNeeded(...args));
   }
   protected override async summarize(input: SummarizationInput, agent: Agent, signal?: AbortSignal): Promise<SummaryResult> {
     signal = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(900_000)]);
     signal.throwIfAborted();
-    const compat = this.ctx.piCompat;
+    const compat = this.ctx.codexPool;
     let lease: Promise<CompactionAuth> | undefined;
     const getAuth = () => lease ??= abortable(compat.broker.acquire('compact', '', signal), signal!).then(auth => ({
       accessToken: auth.apiKey, accountId: auth.accountId, headers: { ...auth.headers },

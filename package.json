@@ -1,9 +1,9 @@
 {
-  "name": "dsh-pi-compat",
+  "name": "dsh-codex",
   "version": "0.1.0-local",
   "private": true,
   "type": "module",
-  "description": "Pi-compatible Codex authentication, tools, compaction and session settings for DeepSeek Harness",
+  "description": "ChatGPT Codex account pool, web/image tools, compaction and session settings for DeepSeek Harness",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -42,6 +42,7 @@
     "@deepseek-ai/cordis": "4.0.5",
     "@deepseek-ai/dsh-agent": "0.2.1-rc.2",
     "@deepseek-ai/dsh-attachment": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-authorization": "0.2.1-rc.2",
     "@deepseek-ai/dsh-brand": "0.2.1-rc.2",
     "@deepseek-ai/dsh-commands": "0.2.1-rc.2",
     "@deepseek-ai/dsh-compaction-basic": "0.2.1-rc.2",
@@ -58,8 +59,7 @@
     "@deepseek-ai/dsh-util-values": "0.2.1-rc.2",
     "@deepseek-ai/dsh-working-directory": "0.2.1-rc.2",
     "@deepseek-ai/schemastery": "^3.18.5",
-    "@earendil-works/pi-ai": "^1.1.0",
-    "@earendil-works/pi-coding-agent": "1.1.0"
+    "@earendil-works/pi-ai": "^1.1.0"
   },
   "files": [
     "lib",
@@ -73,11 +73,6 @@
     "THIRD_PARTY_NOTICES.md",
     "licenses"
   ],
-  "peerDependenciesMeta": {
-    "@earendil-works/pi-coding-agent": {
-      "optional": true
-    }
-  },
   "devDependencies": {
     "@deepseek-ai/dsh-agent-loop-testkit": "0.2.1-rc.2",
     "@types/js-yaml": "^4.0.9",
