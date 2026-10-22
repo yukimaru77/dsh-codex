@@ -20,11 +20,11 @@ const specifiers: Record<string, string> = {
 const plugin = (entry: string) => JSON.stringify(specifiers[entry]);
 const standardPath = resolve(root, 'node_modules/@deepseek-ai/dsh-web-app/presets/standard.patch.yml');
 const original = await readFile(standardPath, 'utf8');
-// Codex tools, Codex compaction and no duplicate web_search: shared by the codex
+// Codex tools, Codex compaction, and no web_search or web_fetch (web_run covers both): shared by the codex
 // preset and (as a full-config override) the standard preset.
 const withCodex = (text: string) => text
   .replace("name: '@deepseek-ai/dsh-compaction-basic'", `name: ${plugin('compaction-entry')}`)
-  .replace('fetch: true\n              searchTimeoutMs:', 'fetch: true\n              search: false\n              searchTimeoutMs:')
+  .replace('fetch: true\n              searchTimeoutMs:', 'fetch: false\n              search: false\n              searchTimeoutMs:')
   + `\n          - id: codex-tools\n            name: ${plugin('agent-entry')}\n`;
 // Top-level id-targeted row: the standard preset keeps its id and order but gets the Codex loadout.
 const standardOverride = withCodex(original).replace(/^[\s\S]*?- insert:\n/, '').split('\n').map(line => line.slice(4)).join('\n');
