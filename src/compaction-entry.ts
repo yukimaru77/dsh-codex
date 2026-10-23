@@ -7,7 +7,7 @@ import { requestNativeCompaction, type CompactionAuth } from './compact/transpor
 import { checkpointTexts, decodeCheckpoint } from './compact/checkpoint.ts';
 import { portableSummary } from './compact/portable.ts';
 import { abortable } from './compact/portable-core.ts';
-import { withDeclaredToolUpdates } from './compact/tool-updates.ts';
+import { outgrowsNativeModel, withDeclaredToolUpdates } from './compact/tool-updates.ts';
 import type {} from './service.ts';
 
 /** Preset-scoped replacement for compaction-basic; inherits all normal DSH policies. */
@@ -54,6 +54,11 @@ export default class CodexCompaction extends BasicCompactionEngine {
     }
     if (!compat.nativeCompaction) {
       if (checkpointTexts(input.messages).length) throw new Error('Cannot use ordinary text summarization on an opaque checkpoint.');
+      return super.summarize(input, agent, signal);
+    }
+    // A session on another provider (e.g. a 1M-token DeepSeek) can outgrow the Codex model
+    // that native compaction would use; summarize it with its own model instead.
+    if (!checkpointTexts(input.messages).length && outgrowsNativeModel(input, compat.adapter.nativeTarget?.(agent))) {
       return super.summarize(input, agent, signal);
     }
     const prepared = await compat.adapter.nativeRequest(input, agent, signal);

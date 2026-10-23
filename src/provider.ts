@@ -135,6 +135,13 @@ export class PooledCodexAdapter extends LlmAdapter implements PayloadTransformRe
     } finally { watchdog[Symbol.dispose](); }
   }
   /** Capture pi-ai's exact request serializer without acquiring auth or sending any request. */
+  /** The Codex model native compaction would use for this session, and whether the session itself runs elsewhere. */
+  nativeTarget(agent: Agent): { portable: boolean; contextWindow: number } | undefined {
+    const routed: Partial<LlmCallConfig> = this.options.routeFor?.(agent) ?? agent.session.requestHeader()?.config ?? agent.options;
+    const portable = routed.provider !== 'openai-codex';
+    if (!portable && !routed.model) return undefined;
+    try { return { portable, contextWindow: this.model(portable ? 'gpt-6-luna' : routed.model!).contextWindow }; } catch { return undefined; }
+  }
   async nativeRequest(input: SummarizationInput, agent: Agent, signal?: AbortSignal): Promise<NativeCompactionRequest | undefined> {
     const routed: Partial<LlmCallConfig> = this.options.routeFor?.(agent) ?? agent.session.requestHeader()?.config ?? agent.options;
     const portable = routed.provider !== 'openai-codex';

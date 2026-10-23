@@ -21,3 +21,19 @@ export function withDeclaredToolUpdates(input: SummarizationInput): Summarizatio
   }
   return changed ? { ...input, messages } : input;
 }
+
+/** Share of the Codex model's window a region may fill before it is summarized by the session's own model. */
+export const NATIVE_FILL = 0.8;
+
+/** Rough token count: UTF-8 bytes / 3 (closer to one token per character for Japanese than chars / 4). */
+export function estimateTokens(input: SummarizationInput): number {
+  return Math.ceil(Buffer.byteLength(JSON.stringify(input.messages)) / 3);
+}
+
+/**
+ * Whether a session on another provider has outgrown the Codex model native
+ * compaction would use (e.g. a 1M-token DeepSeek region against gpt-6-luna).
+ */
+export function outgrowsNativeModel(input: SummarizationInput, target: { portable: boolean; contextWindow: number } | undefined): boolean {
+  return target?.portable === true && estimateTokens(input) > target.contextWindow * NATIVE_FILL;
+}
