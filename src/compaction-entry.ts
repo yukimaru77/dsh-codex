@@ -7,6 +7,7 @@ import { requestNativeCompaction, type CompactionAuth } from './compact/transpor
 import { checkpointTexts, decodeCheckpoint } from './compact/checkpoint.ts';
 import { portableSummary } from './compact/portable.ts';
 import { abortable } from './compact/portable-core.ts';
+import { withDeclaredToolUpdates } from './compact/tool-updates.ts';
 import type {} from './service.ts';
 
 /** Preset-scoped replacement for compaction-basic; inherits all normal DSH policies. */
@@ -39,6 +40,7 @@ export default class CodexCompaction extends BasicCompactionEngine {
   protected override async summarize(input: SummarizationInput, agent: Agent, signal?: AbortSignal): Promise<SummaryResult> {
     signal = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(900_000)]);
     signal.throwIfAborted();
+    input = withDeclaredToolUpdates(input);
     const compat = this.ctx.codexPool;
     let lease: Promise<CompactionAuth> | undefined;
     const getAuth = () => lease ??= abortable(compat.broker.acquire('compact', '', signal), signal!).then(auth => ({
