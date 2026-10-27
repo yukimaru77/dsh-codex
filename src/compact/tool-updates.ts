@@ -32,7 +32,7 @@ export function estimateTokens(input: SummarizationInput): number {
 
 /**
  * Whether a session on another provider has outgrown the Codex model native
- * compaction would use (e.g. a 1M-token DeepSeek region against gpt-6-luna).
+ * compaction would use (e.g. a 1M-token DeepSeek region against gpt-6.1-sol).
  */
 export function outgrowsNativeModel(input: SummarizationInput, target: { portable: boolean; contextWindow: number } | undefined): boolean {
   return target?.portable === true && estimateTokens(input) > target.contextWindow * NATIVE_FILL;

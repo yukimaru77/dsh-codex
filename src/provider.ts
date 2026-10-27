@@ -26,6 +26,8 @@ export interface ProviderOptions {
   beforeRequest?: (sessionId: string) => Promise<void>;
   routeFor?: (agent: Agent) => Partial<LlmCallConfig>;
 }
+/** Native compaction always runs on Sol; the next pre-step converts its checkpoint to portable text for the session model. */
+const COMPACTION_MODEL = 'gpt-6.1-sol';
 /** Reuses DSH's actual serialization, metadata and stream adapters, not a parallel agent loop. */
 export class PooledCodexAdapter extends LlmAdapter implements PayloadTransformRegistry {
   private readonly delegate: PiAiAdapter;
@@ -135,19 +137,19 @@ export class PooledCodexAdapter extends LlmAdapter implements PayloadTransformRe
     } finally { watchdog[Symbol.dispose](); }
   }
   /** Capture pi-ai's exact request serializer without acquiring auth or sending any request. */
-  /** The Codex model native compaction would use for this session, and whether the session itself runs elsewhere. */
+  /** The Codex model native compaction uses (always Sol), and whether the session itself runs elsewhere. */
   nativeTarget(agent: Agent): { portable: boolean; contextWindow: number } | undefined {
     const routed: Partial<LlmCallConfig> = this.options.routeFor?.(agent) ?? agent.session.requestHeader()?.config ?? agent.options;
     const portable = routed.provider !== 'openai-codex';
     if (!portable && !routed.model) return undefined;
-    try { return { portable, contextWindow: this.model(portable ? 'gpt-6-luna' : routed.model!).contextWindow }; } catch { return undefined; }
+    try { return { portable, contextWindow: this.model(COMPACTION_MODEL).contextWindow }; } catch { return undefined; }
   }
   async nativeRequest(input: SummarizationInput, agent: Agent, signal?: AbortSignal): Promise<NativeCompactionRequest | undefined> {
     const routed: Partial<LlmCallConfig> = this.options.routeFor?.(agent) ?? agent.session.requestHeader()?.config ?? agent.options;
     const portable = routed.provider !== 'openai-codex';
     if (!portable && !routed.model) return undefined;
     await this.options.beforeRequest?.(String(agent.session.id));
-    const model = this.model(portable ? 'gpt-6-luna' : routed.model!);
+    const model = this.model(COMPACTION_MODEL);
     const checkpoints = checkpointTexts(input.messages);
     if (checkpoints.some(text => decodeCheckpoint(text)!.model !== model.id)) {
       throw new Error('Checkpoint model changed; convert the checkpoint at the next pre-step before compacting.');

@@ -45,6 +45,11 @@ function fixture() {
   } } as unknown as Agent;
   return { broker, adapter, tiers, model, agent, authCount: () => auth };
 }
+// Sol declares tools as developer `additional_tools` input groups rather than top-level `tools`.
+const declaredTools = (payload: Record<string, unknown>): any[] => [
+  ...((payload.tools as any[] | undefined) ?? []),
+  ...(payload.input as any[]).filter(m => m.type === 'additional_tools').flatMap(m => m.tools),
+];
 const user = (text: string) => createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text }] });
 const input = () => ({ messages: [
   createSystemMessage('Synthetic system prefix.'),
@@ -75,15 +80,16 @@ test('provider review: nativeRequest uses actual pi-ai serializer for system/too
   t.mock.method(globalThis, 'fetch', async () => { network++; throw new Error('Forbidden network'); });
   const request = await f.adapter.nativeRequest(input(), f.agent);
   assert.ok(request);
-  assert.equal(request.model, f.model.id);
+  // Native compaction is pinned to Sol whatever the session model is.
+  assert.equal(request.model, 'gpt-6.1-sol');
   assert.equal(request.payload.instructions, 'Synthetic system prefix.');
   assert.equal(request.payload.store, false);
   assert.equal(request.payload.stream, true);
   assert.deepEqual(request.payload.include, ['reasoning.encrypted_content']);
   assert.equal(request.payload.service_tier, 'priority');
   assert.ok((request.payload.input as any[]).some((m: any) => m.role === 'user' && m.content.some((b: any) => b.text === 'Synthetic question.')));
-  assert.equal((request.payload.tools as any[])[0].name, 'fixture_tool');
-  assert.deepEqual((request.payload.tools as any[])[0].parameters.required, ['value']);
+  assert.equal(declaredTools(request.payload)[0].name, 'fixture_tool');
+  assert.deepEqual(declaredTools(request.payload)[0].parameters.required, ['value']);
   assert.equal(request.sessionId, 'synthetic-provider-review');
   assert.equal(f.authCount(), 0); assert.equal(network, 0);
 });
@@ -93,7 +99,7 @@ test('provider review: actual native serializer preserves trusted encrypted repl
   const f = fixture();
   const opaque = { type: 'compaction', encrypted_content: 'synthetic-only-opaque-checkpoint+/=' };
   const history = [{ role: 'user', content: [{ type: 'input_text', text: 'retained prefix' }] }, opaque];
-  const encoded = encodeCheckpoint(f.model.id, history);
+  const encoded = encodeCheckpoint('gpt-6.1-sol', history);
   const checkpoint = { ...user(encoded), source: compactCheckpointSource(CompactionId('synthetic')) };
   f.tiers.setOverride(String(f.agent.session.id), 'openai-codex', 'flex');
   const request = await f.adapter.nativeRequest({ messages: [checkpoint, user('after checkpoint')] }, f.agent);
@@ -211,15 +217,15 @@ test('payload transforms: rejection prevents both stream sending and native requ
   assert.equal((await f.adapter.nativeRequest(input(), f.agent))?.payload.instructions, 'Synthetic system prefix.');
 });
 
-test('portable serializer: foreign transcript preserves DSH system/tools but uses real Luna defaults', async t => {
+test('portable serializer: foreign transcript preserves DSH system/tools and compacts on Sol', async t => {
   const f = fixture();
   t.mock.method(globalThis, 'fetch', async () => { throw new Error('No network during serialization'); });
   const agent = { ...f.agent, session: { ...f.agent.session, requestHeader: () => ({ config: { provider: 'deepseek', model: 'foreign', reasoningEffort: 'off', maxTokens: 999999 } }) } } as unknown as Agent;
   const request = await f.adapter.nativeRequest(input(), agent);
-  assert.ok(request?.portable); assert.equal(request.model, 'gpt-6-luna');
+  assert.ok(request?.portable); assert.equal(request.model, 'gpt-6.1-sol');
   assert.equal(request.payload.instructions, 'Synthetic system prefix.');
   assert.equal((request.payload.reasoning as any).effort, 'high');
-  assert.equal((request.payload.tools as any[])[0].name, 'fixture_tool');
+  assert.equal(declaredTools(request.payload)[0].name, 'fixture_tool');
   assert.equal(f.authCount(), 0);
 });
 
