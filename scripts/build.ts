@@ -22,8 +22,21 @@ const standardPath = resolve(root, 'node_modules/@deepseek-ai/dsh-web-app/preset
 const original = await readFile(standardPath, 'utf8');
 // Codex tools, Codex compaction, and no web_search or web_fetch (web_run covers both): shared by the codex
 // preset and (as a full-config override) the standard preset.
+// Match Codex CLI: auto-compact at 90% of each Codex model's window (headroom = the other 10%).
+const codexCompactionPolicies: [model: string, headroomTokens: number][] = [
+  ['gpt-6-astra', 27200], ['gpt-6.1-sol', 50000], ['gpt-6.1-terra', 50000],
+];
+const compactionConfig = (indent: string) => [
+  `${indent}config:`,
+  `${indent}  # Match Codex CLI: auto-compact at 90% of the model window.`,
+  `${indent}  modelPolicies:`,
+  ...codexCompactionPolicies.flatMap(([model, headroomTokens]) => [
+    `${indent}    - provider: openai-codex`, `${indent}      model: ${model}`, `${indent}      thresholdRatio: 0.9`,
+    `${indent}      headroomTokens: ${headroomTokens}`, `${indent}      maxTokens: 65536`,
+  ]),
+].join('\n');
 const withCodex = (text: string) => text
-  .replace("name: '@deepseek-ai/dsh-compaction-basic'", `name: ${plugin('compaction-entry')}`)
+  .replace(/^( +)name: '@deepseek-ai\/dsh-compaction-basic'$/m, (_, indent: string) => `${indent}name: ${plugin('compaction-entry')}\n${compactionConfig(indent)}`)
   .replace('fetch: true\n              searchTimeoutMs:', 'fetch: false\n              search: false\n              searchTimeoutMs:')
   + `\n          - id: codex-tools\n            name: ${plugin('agent-entry')}\n`;
 // Top-level id-targeted row: the standard preset keeps its id and order but gets the Codex loadout.
