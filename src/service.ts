@@ -15,6 +15,20 @@ import { DshAccountStore } from './auth/store.ts';
 import { registerSettings, type SettingsConfiguration } from './settings.ts';
 
 declare module '@deepseek-ai/cordis' { interface Context { codexPool: CodexPoolService } }
+/**
+ * A model selection made since the last request: DSH applies it only when the
+ * next request is assembled, so settings commands run right after /model would
+ * otherwise still see the previous route.
+ */
+function selectedRoute(agent: Agent): Partial<LlmCallConfig> | undefined {
+  const events = (agent.session as unknown as { snapshotEvents?(): readonly { type: string; data?: unknown }[] }).snapshotEvents?.() ?? [];
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i]!;
+    if (event.type === 'model/selection') return event.data as Partial<LlmCallConfig>;
+    if (event.type === 'request/header') return undefined;
+  }
+  return undefined;
+}
 export interface Config {
   accounts?: string[];
   selectorScript?: string;
@@ -59,7 +73,7 @@ export class CodexPoolService extends Service<Config> {
       tierConfigPath: this.options.tierConfigPath ?? join(dshHome(), 'codex-pool', 'service-tier.json'),
       activeProviders: ['openai-codex'],
       modelFor: agent => {
-        const route = agent.session.requestHeader()?.config ?? agent.options;
+        const route = selectedRoute(agent) ?? this.routeFor(agent);
         if (route.provider === 'openai-codex' && route.model) return this.adapter.model(route.model);
         throw new Error('Service-tier injection in this bundle is currently available for openai-codex.');
       },
